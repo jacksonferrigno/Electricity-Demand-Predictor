@@ -6,7 +6,7 @@ if __name__ == "__main__":
     #config params
     START ='2020-07-29'
     END = '2023-12-31'
-    """
+    
     #base analysis 
     print("\n running base analysis...")
     base_predictor = DemandPredictor(START,END)
@@ -21,7 +21,6 @@ if __name__ == "__main__":
     
     base_predictor.plot_analysis()
     plt.show()
-    """
     #seasonal
     print("\n running seasonal analysis...")
     season_predictor= SeasonalPredictor(START, END)
