@@ -12,7 +12,7 @@ import pandas as pd
 from base_demand_predictor import DemandPredictor
 
 class LTSMDemandPredictor(DemandPredictor):
-    def __init__(self, start_date, end_date, sequence_length=7, n_clusters=3):
+    def __init__(self, start_date, end_date, sequence_length=3, n_clusters=3):
         super().__init__(start_date, end_date, n_clusters)
         self.sequence_length= sequence_length
         self.temp_scaler= MinMaxScaler() # normalize temp ** easier to seperate to send back to actual value normalizing gets it 0-1
