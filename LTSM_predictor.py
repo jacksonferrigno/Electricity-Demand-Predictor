@@ -111,8 +111,13 @@ class LTSMDemandPredictor(DemandPredictor):
             """extra penalty for under predicting demand"""
             mse = tf.keras.losses.MSE(y_true,y_pred)
             high_demand_mask = tf.cast(y_true>tf.reduce_mean(y_true), tf.float32)
+            low_demand_mask = 1.0 - high_demand_mask
+            
             under_pred_penalty = tf.maximum(0.0, y_true -y_pred) *high_demand_mask
-            return mse + 0.3 * tf.reduce_mean(under_pred_penalty)   
+            
+            over_pred_penalty = tf.maximum(0.0,y_pred-y_true)* low_demand_mask
+            penalty = 0.3 * tf.reduce_mean(under_pred_penalty) + 0.2 * tf.reduce_mean(over_pred_penalty)
+            return mse +penalty
         
         model.compile(
             optimizer=tf.keras.optimizers.Adam(learning_rate=0.01),
