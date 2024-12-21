@@ -10,7 +10,7 @@ if __name__ == "__main__":
     print("\n running LSTM analysis...")
     lstm_predictor = LTSMDemandPredictor(START,END)
     
-    lstm_predictor.fit(epochs=100,batch_size=32)
+    lstm_predictor.fit(epochs=200,batch_size=16)
     
     lstm_metrics = lstm_predictor.get_metrics()
     
