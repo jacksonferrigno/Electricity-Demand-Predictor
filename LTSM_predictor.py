@@ -5,7 +5,7 @@ from tensorflow.keras.models import Sequential, Model
 from tensorflow.keras.layers import LSTM, Dense, Dropout, Input, Bidirectional, Concatenate, LayerNormalization
 from tensorflow.keras.layers import MultiHeadAttention, GlobalAveragePooling1D
 from tensorflow.keras.losses import MSE, MAE  
-from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
 import numpy as np
 import pandas as pd
 
@@ -16,7 +16,7 @@ class LTSMDemandPredictor(DemandPredictor):
         super().__init__(start_date, end_date, n_clusters)
         self.sequence_length= sequence_length
         self.temp_scaler= MinMaxScaler() # normalize temp ** easier to seperate to send back to actual value normalizing gets it 0-1
-        self.demand_scaler =MinMaxScaler() # normalize demand
+        self.demand_scaler =StandardScaler() # normalize demand
         self.model = None  #will hold model once built
         self.history=None # will store training data
         self.attention_weights = None # stores attention weights for model
@@ -37,7 +37,7 @@ class LTSMDemandPredictor(DemandPredictor):
         #scale data 
         scaled_temps = self.temp_scaler.fit_transform(self.X) # scale temp 0-1
         scaled_demands = self.demand_scaler.fit_transform(self.y.reshape(-1,1)) # make sures data is in right format
-        forecast_scaler= MinMaxScaler()
+        forecast_scaler= StandardScaler()
         scaled_forecasts = forecast_scaler.fit_transform(self.data['day_ahead_forecast'].values.reshape(-1,1))
         
         
@@ -130,9 +130,8 @@ class LTSMDemandPredictor(DemandPredictor):
             low_demand_mask = 1.0 - high_demand_mask
             
             under_pred_penalty = tf.maximum(0.0, y_true -y_pred) *high_demand_mask
-            
             over_pred_penalty = tf.maximum(0.0,y_pred-y_true)* low_demand_mask
-            penalty = 0.5 * tf.reduce_mean(under_pred_penalty) + 0.3 * tf.reduce_mean(over_pred_penalty)
+            penalty = 0.65 * tf.reduce_mean(under_pred_penalty) + 0.77 * tf.reduce_mean(over_pred_penalty)
             return mse +penalty
         
         model.compile(
@@ -166,8 +165,8 @@ class LTSMDemandPredictor(DemandPredictor):
             ),
             tf.keras.callbacks.ReduceLROnPlateau(
                 monitor='val_loss',
-                factor=0.2,
-                patience=10,
+                factor=0.3,
+                patience=12,
                 min_lr=0.00001,
                 min_delta=0.0001
             ),
@@ -299,10 +298,24 @@ class LTSMDemandPredictor(DemandPredictor):
         """Get all analysis metrics including training history"""
         if self.metrics is None:
             raise ValueError("Models not fitted yet. Call fit() first.")
+        X, y= self.prepare_sequences()
+        lstm_pred= self.model.predict(X)
+        lstm_pred = self.demand_scaler.inverse_transform(lstm_pred)
+        actual_demands=self.demand_scaler.inverse_transform(y)
+        tva_forecasts= self.data['day_ahead_forecast'].values[self.sequence_length-1:-1][:len(lstm_pred)]
+        tva_forecasts= tva_forecasts.reshape(-1,1)
+        
+        
+        #calc how often we beat the tva
+        lstm_errors= np.abs(lstm_pred-actual_demands)
+        tva_errors=np.abs(tva_forecasts-actual_demands)
+        lstm_wins= (lstm_errors<tva_errors).sum()
+        total_predictions=float(len(lstm_errors))
             
         metrics_dict = {
             'r2': self.metrics['r2'],
-            'rmse': self.metrics['rmse']
+            'rmse': self.metrics['rmse'],
+            'model_win_rate': (lstm_wins/total_predictions)*100
         }
         
         if self.history is not None:
