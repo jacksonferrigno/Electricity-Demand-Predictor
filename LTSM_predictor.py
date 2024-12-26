@@ -15,7 +15,7 @@ class LTSMDemandPredictor(DemandPredictor):
     def __init__(self, start_date, end_date, sequence_length=3, n_clusters=3):
         super().__init__(start_date, end_date, n_clusters)
         self.sequence_length= sequence_length
-        self.temp_scaler= MinMaxScaler() # normalize temp ** easier to seperate to send back to actual value normalizing gets it 0-1
+        self.temp_scaler= StandardScaler() # normalize temp ** easier to seperate to send back to actual value normalizing gets it 0-1
         self.demand_scaler =StandardScaler() # normalize demand
         self.model = None  #will hold model once built
         self.history=None # will store training data
@@ -159,7 +159,7 @@ class LTSMDemandPredictor(DemandPredictor):
         callbacks = [
             tf.keras.callbacks.EarlyStopping(
                 monitor='val_loss',
-                patience=20,
+                patience=25,
                 restore_best_weights=True,
                 min_delta=0.0001
             ),
