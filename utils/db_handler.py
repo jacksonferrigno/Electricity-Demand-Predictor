@@ -55,18 +55,22 @@ class DatabaseHandler:
             # Collect temperature data
             high_temps = []
             low_temps = []
+            precip_vals=[]
 
             for region in regions.values():
                 if region['high_temp'] is not None:
                     high_temps.append(region['high_temp'])
                 if region['low_temp'] is not None:
                     low_temps.append(region['low_temp'])
+                if region['precipitation'] is not None:
+                    precip_vals.append(region['precipitation'])
 
             if high_temps and low_temps:
                 weather_rows.append({
                     'date': date,
                     'avg_high': sum(high_temps) / len(high_temps),
-                    'avg_low': sum(low_temps) / len(low_temps)
+                    'avg_low': sum(low_temps) / len(low_temps),
+                    'avg_precip': sum(precip_vals)/len(precip_vals) if precip_vals else 0
                 })
 
         df = pd.DataFrame(weather_rows)

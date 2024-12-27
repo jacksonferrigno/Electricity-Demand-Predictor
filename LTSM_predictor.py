@@ -17,6 +17,7 @@ class LTSMDemandPredictor(DemandPredictor):
         self.sequence_length= sequence_length
         self.temp_scaler= StandardScaler() # normalize temp ** easier to seperate to send back to actual value normalizing gets it 0-1
         self.demand_scaler =StandardScaler() # normalize demand
+        self.precip_scaler = StandardScaler() 
         self.model = None  #will hold model once built
         self.history=None # will store training data
         self.attention_weights = None # stores attention weights for model
@@ -39,6 +40,7 @@ class LTSMDemandPredictor(DemandPredictor):
         scaled_demands = self.demand_scaler.fit_transform(self.y.reshape(-1,1)) # make sures data is in right format
         forecast_scaler= StandardScaler()
         scaled_forecasts = forecast_scaler.fit_transform(self.data['day_ahead_forecast'].values.reshape(-1,1))
+        scaled_precip = self.precip_scaler.fit_transform(self.data['avg_precip'].values.reshape(-1,1))
         
         
         #feat engineering- historical patterns
@@ -46,12 +48,13 @@ class LTSMDemandPredictor(DemandPredictor):
         df['scaled_temp'] = scaled_temps  # Add scaled temp to dataframe
         df['scaled_demand'] = scaled_demands  # Add scaled demand to dataframe
         df['scaled_forecast']=scaled_forecasts.flatten()
+        df['scaled_precip']=scaled_precip.flatten()
         
         
         # Calculate features using scaled temperature
         df['temp_rolling_mean_3d'] = df['scaled_temp'].rolling(window=3).mean() # 3 day temp avg short term trend
-        df['temp_rolling_std'] = df['scaled_temp'].rolling(window=3).std() # captures temp volatility
-        df['temp_change']= df['scaled_temp'].diff() # day to day shift
+        #df['temp_rolling_std'] = df['scaled_temp'].rolling(window=3).std() # captures temp volatility
+        #df['temp_change']= df['scaled_temp'].diff() # day to day shift
         df['demand_lag1']= df['scaled_demand'].shift(1) # prev day demand to help predict next day
         
         df['forecast_error']=df['scaled_demand']-df['scaled_forecast'].shift(1)
@@ -62,17 +65,19 @@ class LTSMDemandPredictor(DemandPredictor):
         df['day_sin'] = np.sin(2*np.pi * df['day_of_year']/365)
         df['day_cos']= np.cos(2 *np.pi *df['day_of_year']/365 ) #these two functions make the days roll ( round ribbon)
         
+        #rain info
+        
         # Fill NaN values
         df = df.bfill()
             
         feature_columns = [
             'scaled_temp', 'scaled_demand', 'scaled_forecast',
             'temp_rolling_mean_3d', 
-            'temp_rolling_std', 'temp_change', 'demand_lag1',
-            'forecast_error', 'forecast_bias',
+            'demand_lag1',
+            'forecast_bias',
+            'scaled_precip',
             'day_sin', 'day_cos'
         ]
-        
         # creating sequences 
         X, y = [], []
         for i in range(len(df)- self.sequence_length): #create sliding window of data
@@ -218,7 +223,8 @@ class LTSMDemandPredictor(DemandPredictor):
         # Create DataFrame with features
         df = pd.DataFrame({
             'avg_high': input_sequence['temperature'],
-            'day_ahead_forecast': input_sequence['forecast']  # Add forecast to input
+            'day_ahead_forecast': input_sequence['forecast'], # Add forecast to input
+            'avg_precip':input_sequence.get('precipitation',0)
         })
         
         # Scale features
@@ -246,11 +252,11 @@ class LTSMDemandPredictor(DemandPredictor):
         feature_columns = [
             'scaled_temp', 'scaled_forecast',
             'temp_rolling_mean_3d', 
-            'temp_rolling_std', 'temp_change',
             'forecast_error', 'forecast_bias',
+            'scaled_precip',
             'day_sin', 'day_cos'
         ]
-        
+            
         sequence = df[feature_columns].values
         return np.expand_dims(sequence, axis=0)
     def plot_analysis(self):
