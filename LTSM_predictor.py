@@ -59,6 +59,7 @@ class LTSMDemandPredictor(DemandPredictor):
         
         df['forecast_error']=df['scaled_demand']-df['scaled_forecast'].shift(1)
         df['forecast_bias']= df['forecast_error'].rolling(window=7).mean()
+        df['freezing_flag'] = ((df['avg_high']<=38)&(df['avg_precip']>0)).astype(float)
                     
         # cyclical time feats
         df['day_of_year']= df['date'].dt.dayofyear
@@ -166,14 +167,14 @@ class LTSMDemandPredictor(DemandPredictor):
                 monitor='val_loss',
                 patience=25,
                 restore_best_weights=True,
-                min_delta=0.0001
+                min_delta=0.00005
             ),
             tf.keras.callbacks.ReduceLROnPlateau(
                 monitor='val_loss',
                 factor=0.3,
                 patience=12,
                 min_lr=0.00001,
-                min_delta=0.0001
+                min_delta=0.00005
             ),
             tf.keras.callbacks.ModelCheckpoint(
                 'best_model.keras',
