@@ -14,17 +14,10 @@ class DatabaseHandler:
         )
 
     def get_demand_data(self, start_date, end_date):
-        demand_query = f'''
-            select period, value
-            from daily_power_data
-            where type_name = 'Demand'
-            and period between '{start_date}' and '{end_date}'
-            order by period
-        '''
-        # Keep exact execution style
+        # First get demand data
         demand_data = self.supabase.table('daily_power_data') \
-            .select('period, value') \
-            .filter('type_name', 'eq', 'Demand') \
+            .select('period, type_name, value') \
+            .or_('type_name.eq.Demand,type_name.eq.Day-ahead demand forecast') \
             .filter('period', 'gte', start_date) \
             .filter('period', 'lte', end_date) \
             .order('period') \
@@ -33,16 +26,18 @@ class DatabaseHandler:
         df = pd.DataFrame(demand_data.data)
         if not df.empty:
             df['period'] = pd.to_datetime(df['period'])
+            # Pivot the data to create separate columns for demand and forecast
+            df = df.pivot(index='period', columns='type_name', values='value').reset_index()
+            df.columns.name = None  # Remove the columns name
+            # Rename columns for clarity
+            df = df.rename(columns={
+                'Demand': 'actual_demand',
+                'Day-ahead demand forecast': 'day_ahead_forecast'
+            })
             df = df.sort_values('period')
         return df
 
     def get_weather_data(self, start_date, end_date):
-        weather_query = f'''
-            select date, regions
-            from weather_data
-            where date between '{start_date}' and '{end_date}'
-            order by date
-        '''
         # Keep exact execution style
         weather_data = self.supabase.table('weather_data') \
             .select('date, regions') \
@@ -60,18 +55,22 @@ class DatabaseHandler:
             # Collect temperature data
             high_temps = []
             low_temps = []
+            precip_vals=[]
 
             for region in regions.values():
                 if region['high_temp'] is not None:
                     high_temps.append(region['high_temp'])
                 if region['low_temp'] is not None:
                     low_temps.append(region['low_temp'])
+                if region['precipitation'] is not None:
+                    precip_vals.append(region['precipitation'])
 
             if high_temps and low_temps:
                 weather_rows.append({
                     'date': date,
                     'avg_high': sum(high_temps) / len(high_temps),
-                    'avg_low': sum(low_temps) / len(low_temps)
+                    'avg_low': sum(low_temps) / len(low_temps),
+                    'avg_precip': sum(precip_vals)/len(precip_vals) if precip_vals else 0
                 })
 
         df = pd.DataFrame(weather_rows)

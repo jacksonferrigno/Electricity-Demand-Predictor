@@ -10,7 +10,7 @@ if __name__ == "__main__":
     print("\n running LSTM analysis...")
     lstm_predictor = LTSMDemandPredictor(START,END)
     
-    lstm_predictor.fit(epochs=200,batch_size=32)
+    lstm_predictor.fit(epochs=200,batch_size=16)
     
     lstm_metrics = lstm_predictor.get_metrics()
     
@@ -21,6 +21,7 @@ if __name__ == "__main__":
         print("\n==== Training History ====")
         print(f"Final loss: {lstm_metrics['training_history']['final_loss']:.4f}")
         print(f"Best validation loss: {lstm_metrics['training_history']['best_val_loss']:.4f}")
+        print(f"our model outperformed the TVA's {lstm_metrics['model_win_rate']:.2f}% of the time")
     
     # Plot LSTM analysis
     lstm_predictor.plot_analysis()

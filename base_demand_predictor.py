@@ -39,7 +39,7 @@ class DemandPredictor:
         )
         
         self.X = self.data[['avg_high']].values
-        self.y = self.data['value'].values
+        self.y = self.data['actual_demand'].values
         return self.data
 
     def fit_polynomial_regression(self):
