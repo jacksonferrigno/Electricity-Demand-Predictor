@@ -82,7 +82,7 @@ class LTSMDemandPredictor(DemandPredictor):
         df['day_cos'] = np.cos(2 * np.pi * df['day_of_year']/365).astype(float)
         # dynamic forcast adjustments 
         # Fill NaN values
-        df = df.fillna(method='bfill').fillna(method='ffill')
+        df = df.bfill()
         
         # Define feature columns
         feature_columns = [
@@ -148,7 +148,7 @@ class LTSMDemandPredictor(DemandPredictor):
         x = Dense(32, activation='relu')(x)
         outputs = Dense(1, activation='linear',
                     kernel_constraint=tf.keras.constraints.MinMaxNorm(
-                        min_value=-2.0, max_value=2.0))(x)
+                        min_value=-3.0, max_value=3.0))(x)
         # create the model 
         model = Model(inputs=inputs, outputs=outputs)
         
@@ -295,7 +295,7 @@ class LTSMDemandPredictor(DemandPredictor):
         df['day_cos'] = input_sequence['day_cos']
         
         # Fill NaN values
-        df = df.fillna(method='bfill').fillna(method='ffill')
+        df = df.bfill()
         
         # Use exactly the same feature columns in same order as prepare_sequences
         feature_columns = [
