@@ -9,7 +9,7 @@ import logging
 import os
 
 class ModelTester:
-    def __init__(self, start_date="2020-07-29", end_date="2023-12-31", output_file='test_results_v1.csv'):
+    def __init__(self, start_date="2020-01-01", end_date="2024-12-31", output_file='test_results_v1.csv'):
         self.output_file = output_file
         self.start_date = start_date
         self.end_date = end_date
@@ -63,7 +63,7 @@ class ModelTester:
             'r2_score': metrics['r2'],
             'rmse': metrics['rmse'],
             'win_rate': metrics.get('model_win_rate',0),
-            'model_version': 'LSTM_V1.0'
+            'model_version': 'LSTM_V2.0'
         }
                 # Add training history if available
         if 'training_history' in metrics:

@@ -6,6 +6,7 @@ from tensorflow.keras.layers import LSTM, Dense, Dropout, Input, Bidirectional, 
 from tensorflow.keras.layers import MultiHeadAttention, GlobalAveragePooling1D
 from tensorflow.keras.losses import MSE, MAE  
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
+import xgboost as xgb
 import numpy as np
 import pandas as pd
 
@@ -31,69 +32,82 @@ class LTSMDemandPredictor(DemandPredictor):
         [Day 1 features, Day 2 features, ... Day 7 features] → Output (y): Day 8 demand
         [Day 2 features, Day 3 features, ... Day 8 features] → Output (y): Day 9 demand
         """
-        # inital data check and scaling
+        # Initial data check and scaling
         if self.data is None:
             self.load_data()
                 
-        #scale data 
-        scaled_temps = self.temp_scaler.fit_transform(self.X) # scale temp 0-1
-        scaled_demands = self.demand_scaler.fit_transform(self.y.reshape(-1,1)) # make sures data is in right format
-        forecast_scaler= StandardScaler()
+        scaled_temps = self.temp_scaler.fit_transform(self.X)
+        scaled_demands = self.demand_scaler.fit_transform(self.y.reshape(-1,1))
+        forecast_scaler = StandardScaler()
         scaled_forecasts = forecast_scaler.fit_transform(self.data['day_ahead_forecast'].values.reshape(-1,1))
         scaled_precip = self.precip_scaler.fit_transform(self.data['avg_precip'].values.reshape(-1,1))
         
-        
-        #feat engineering- historical patterns
+        # Create DataFrame and add basic scaled features
         df = pd.DataFrame(self.data)
-        df['scaled_temp'] = scaled_temps  # Add scaled temp to dataframe
-        df['scaled_demand'] = scaled_demands  # Add scaled demand to dataframe
-        df['scaled_forecast']=scaled_forecasts.flatten()
-        df['scaled_precip']=scaled_precip.flatten()
-        df['date']= pd.to_datetime(df['date'])
-        df['season_num'] = df['date'].dt.month.map({
-            12:1, 1: 1, 2: 1, #winter
-            3: 2, 4: 2, 5: 2, #spring
-            6: 3, 7: 3, 8: 3, #summer
-            9: 4, 10: 4, 11: 4 #fall
-        })
-        df['temp_volatility'] = df['scaled_temp'].rolling(window=7).std()  # Temperature stability
-        # Calculate features using scaled temperature
-        df['temp_rolling_mean_3d'] = df['scaled_temp'].rolling(window=3).mean() # 3 day temp avg short term trend
-        #df['temp_rolling_std'] = df['scaled_temp'].rolling(window=3).std() # captures temp volatility
-        #df['temp_change']= df['scaled_temp'].diff() # day to day shift
-        df['demand_lag1']= df['scaled_demand'].shift(1) # prev day demand to help predict next day
+        df['date'] = pd.to_datetime(df['date'])
+        df['scaled_temp'] = scaled_temps
+        df['scaled_forecast'] = scaled_forecasts.flatten()
+        df['scaled_precip'] = scaled_precip.flatten()
         
-        df['forecast_error']=df['scaled_demand']-df['scaled_forecast'].shift(1)
-        df['forecast_bias']= df['forecast_error'].rolling(window=7).mean()
-        df['temp_rolling_mean_7d'] = df['scaled_temp'].rolling(window=7).mean()  # Weekly temperature trend
-        df['demand_weekly_mean'] = df['scaled_demand'].rolling(window=7).mean()  # Weekly demand pattern
-        df['demand_change'] = df['scaled_demand'].diff()  # Day-over-day demand change     
-        # cyclical time feats
-        df['day_of_year']= df['date'].dt.dayofyear
-        df['day_sin'] = np.sin(2*np.pi * df['day_of_year']/365)
-        df['day_cos']= np.cos(2 *np.pi *df['day_of_year']/365 ) #these two functions make the days roll ( round ribbon)
+        # rolling mean features
+        df['temp_rolling_mean_7d'] = df['scaled_temp'].rolling(window=7, min_periods=1).mean()
+        df['temp_rolling_mean_3d'] = df['scaled_temp'].rolling(window=3, min_periods=1).mean()
         
+        # demand lag features
+        df['demand_lag7'] = df['scaled_forecast'].shift(7)
+        df['demand_lag14'] = df['scaled_forecast'].shift(14)
+        
+        # demand change and weekly mean
+        df['demand_change'] = df['scaled_forecast'].diff()
+        df['demand_weekly_mean'] = df['scaled_forecast'].rolling(window=7, min_periods=1).mean()
+        
+        #  temperature volatility
+        df['temp_volatility'] = df['scaled_temp'].rolling(window=7, min_periods=1).std()
+        
+        # interaction feature
+        df['temp_demand_interaction'] = df['temp_rolling_mean_7d'] * df['demand_weekly_mean']
+        
+        # extreme temperature flag
+        df['extreme_temp_flag'] = ((df['scaled_temp'] > 2.0) | (df['scaled_temp'] < -2.0)).astype(float)
+        
+        # season forcast deviations
+        df['month'] = pd.to_datetime(df['date']).dt.month
+        mon_means= df.groupby('month')['scaled_forecast'].transform('mean')
+        mon_stds=df.groupby('month')['scaled_forecast'].transform('std')
+        df['seasonal_forecast_deviation']= (df['scaled_forecast']-mon_means)/mon_stds
+        
+        # Add cyclical time features
+        df['day_of_year'] = df['date'].dt.dayofyear
+        df['day_sin'] = np.sin(2 * np.pi * df['day_of_year']/365).astype(float)
+        df['day_cos'] = np.cos(2 * np.pi * df['day_of_year']/365).astype(float)
+        # dynamic forcast adjustments 
         # Fill NaN values
-        df = df.bfill()
-            
+        df = df.fillna(method='bfill').fillna(method='ffill')
+        
+        # Define feature columns
         feature_columns = [
-            'scaled_temp', 'scaled_demand', 'scaled_forecast',
+            'scaled_temp', 'scaled_forecast',
             'temp_rolling_mean_7d', 'temp_rolling_mean_3d',
             'demand_weekly_mean',   
             'temp_volatility',       
-            'demand_lag1',
-            'demand_change',         
-            'scaled_precip',
-            'day_sin', 'day_cos'
+            'demand_lag7', 'demand_lag14',
+            'temp_demand_interaction', 'extreme_temp_flag',
+            'demand_change', 'scaled_precip', 
+            'day_sin', 'day_cos',
+            'seasonal_forecast_deviation'
         ]
-        # creating sequences 
+        
+        # Ensure all features are float32
+        df[feature_columns] = df[feature_columns].astype('float32')
+        
+        # Create sequences
         X, y = [], []
-        for i in range(len(df)- self.sequence_length): #create sliding window of data
+        for i in range(len(df) - self.sequence_length):
             feature_sequence = df[feature_columns].iloc[i:(i+self.sequence_length)].values
-            X.append(feature_sequence) # seq of feats for each window
-            y.append(scaled_demands[i+self.sequence_length]) # demand value for day after each 
-            
-        return np.array(X), np.array(y)
+            X.append(feature_sequence)
+            y.append(scaled_demands[i+self.sequence_length])
+        
+        return np.array(X, dtype='float32'), np.array(y, dtype='float32')
     def build_attention_model(self, n_features):
         """ Build model with bidrectional LSTM and mul head attention"""
         #I/P layer
@@ -123,14 +137,18 @@ class LTSMDemandPredictor(DemandPredictor):
         
         # reduce seqeunce dimesnsion
         x= GlobalAveragePooling1D()(x)
-        
         #final prediction layer
-        x= Dense(128, activation='relu')(x)
-        x=Dropout(0.2)(x)
-        x= Dense(64, activation='relu')(x)
-        x= Dropout(0.2)(x)
-        outputs = Dense(1)(x)
-        
+        x = Dense(128, activation='relu',
+                kernel_regularizer=tf.keras.regularizers.l2(0.02))(x)  
+        x = Dropout(0.3)(x)  # Increased dropout
+        x = Dense(64, activation='relu',
+                kernel_regularizer=tf.keras.regularizers.l2(0.02))(x)
+        x = Dropout(0.3)(x)
+        # Add a constraint layer to help with extreme values
+        x = Dense(32, activation='relu')(x)
+        outputs = Dense(1, activation='linear',
+                    kernel_constraint=tf.keras.constraints.MinMaxNorm(
+                        min_value=-2.0, max_value=2.0))(x)
         # create the model 
         model = Model(inputs=inputs, outputs=outputs)
         
@@ -144,7 +162,7 @@ class LTSMDemandPredictor(DemandPredictor):
             
             under_pred_penalty = tf.maximum(0.0, y_true -y_pred) *high_demand_mask
             over_pred_penalty = tf.maximum(0.0,y_pred-y_true)* low_demand_mask
-            penalty = 1.7 * tf.reduce_mean(under_pred_penalty) + 1.3 * tf.reduce_mean(over_pred_penalty)
+            penalty = 1.7 * tf.reduce_mean(under_pred_penalty) + 1.5 * tf.reduce_mean(over_pred_penalty)
             return mse +penalty
         
         model.compile(
@@ -240,39 +258,60 @@ class LTSMDemandPredictor(DemandPredictor):
         scaled_forecasts = self.demand_scaler.transform(df[['day_ahead_forecast']])
         scaled_precip = self.precip_scaler.transform(df[['avg_precip']].values.reshape(-1, 1))
         
-        # Calculate all features
+        # basic scaled features
         df['scaled_temp'] = scaled_temps
-        df['scaled_forecast'] = scaled_forecasts
+        df['scaled_forecast'] = scaled_forecasts.flatten()
         df['scaled_precip'] = scaled_precip.flatten()
         
-        # Rolling means and volatility
-        df['temp_rolling_mean_7d'] = df['scaled_temp'].rolling(window=7).mean()
-        df['temp_rolling_mean_3d'] = df['scaled_temp'].rolling(window=3).mean()
-        df['temp_volatility'] = df['scaled_temp'].rolling(window=7).std()
+        # rolling mean features
+        df['temp_rolling_mean_7d'] = df['scaled_temp'].rolling(window=7, min_periods=1).mean()
+        df['temp_rolling_mean_3d'] = df['scaled_temp'].rolling(window=3, min_periods=1).mean()
         
-        # Demand features
-        df['demand_lag1'] = df['scaled_forecast'].shift(1)
+        # demand lag features
+        df['demand_lag7'] = df['scaled_forecast'].shift(7)
+        df['demand_lag14'] = df['scaled_forecast'].shift(14)
+        
+        # demand change and weekly mean
         df['demand_change'] = df['scaled_forecast'].diff()
-        df['demand_weekly_mean'] = df['scaled_forecast'].rolling(window=7).mean()
+        df['demand_weekly_mean'] = df['scaled_forecast'].rolling(window=7, min_periods=1).mean()
+        
+        # temperature volatility
+        df['temp_volatility'] = df['scaled_temp'].rolling(window=7, min_periods=1).std()
+        
+        # interaction feature
+        df['temp_demand_interaction'] = df['temp_rolling_mean_7d'] * df['demand_weekly_mean']
+        
+        # extreme  flags
+        df['extreme_temp_flag'] = ((df['scaled_temp'] > 2.0) | (df['scaled_temp'] < -2.0)).astype(float)
+
+        #forecast deviations 
+        df['month'] = df['date'].dt.month
+        monthly_means = df.groupby('month')['scaled_forecast'].transform('mean')
+        monthly_stds = df.groupby('month')['scaled_forecast'].transform('std')
+        df['seasonal_forecast_deviation'] = (df['scaled_forecast'] - monthly_means) / monthly_stds
         
         # Add cyclical features
         df['day_sin'] = input_sequence['day_sin']
         df['day_cos'] = input_sequence['day_cos']
         
         # Fill NaN values
-        df = df.fillna(method='bfill')
+        df = df.fillna(method='bfill').fillna(method='ffill')
         
+        # Use exactly the same feature columns in same order as prepare_sequences
         feature_columns = [
-            'scaled_temp', 'scaled_demand', 'scaled_forecast',
+            'scaled_temp', 'scaled_forecast',
             'temp_rolling_mean_7d', 'temp_rolling_mean_3d',
             'demand_weekly_mean',   
             'temp_volatility',       
-            'demand_lag1',
-            'demand_change',         
-            'scaled_precip',
-            'day_sin', 'day_cos'
-        ]
-            
+            'demand_lag7', 'demand_lag14',
+            'temp_demand_interaction', 'extreme_temp_flag',
+            'demand_change', 'scaled_precip', 
+            'day_sin', 'day_cos',
+            'seasonal_forecast_deviation'
+            ]    
+        # Ensure all features are float32
+        df[feature_columns] = df[feature_columns].astype('float32')
+        
         sequence = df[feature_columns].values
         return np.expand_dims(sequence, axis=0)
     def plot_analysis(self):
@@ -347,4 +386,49 @@ class LTSMDemandPredictor(DemandPredictor):
                 'best_val_loss': min(self.history.history['val_loss'])
             }
         
-        return metrics_dict
+            return metrics_dict
+    def analyze_features(self):
+        
+        # Get data
+        X, y = self.prepare_sequences()
+        n_samples, seq_length, n_features = X.shape
+        X_reshaped = X.reshape(n_samples, seq_length * n_features)
+        
+        feature_columns = [
+            'scaled_temp', 'scaled_forecast',
+            'temp_rolling_mean_7d', 'temp_rolling_mean_3d',
+            'demand_weekly_mean',   
+            'temp_volatility',       
+             'demand_lag7', 'demand_lag14',
+            'temp_demand_interaction', 'extreme_temp_flag',
+            'demand_change', 'scaled_precip', 
+            'day_sin', 'day_cos', 'seasonal_forecast_deviation'
+        ]
+        
+        # Create feature names with timesteps
+        features = []
+        for t in range(seq_length):
+            for feat in feature_columns:
+                features.append(f"{feat}_t-{seq_length-t}")
+        
+        # Train simple XGBoost model
+        model = xgb.XGBRegressor(n_estimators=100, random_state=42)
+        model.fit(X_reshaped, y)
+        
+        # Get importance scores and sort them
+        importance = dict(zip(features, model.feature_importances_))
+        sorted_importance = dict(sorted(importance.items(), key=lambda x: x[1], reverse=True))
+        
+        # Plot top 10 features
+        plt.figure(figsize=(10, 6))
+        top_features = list(sorted_importance.items())[:10]
+        
+        plt.barh([x[0] for x in top_features], [x[1] for x in top_features])
+        plt.xlabel('Importance Score')
+        plt.title('Top 10 Most Important Features')
+        plt.tight_layout()
+        
+        return {
+            'importance_scores': sorted_importance,
+            'plot': plt.gcf()
+        }
