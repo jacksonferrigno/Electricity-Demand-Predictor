@@ -54,6 +54,7 @@ class LTSMDemandPredictor(DemandPredictor):
         df['temp_rolling_mean_3d'] = df['scaled_temp'].rolling(window=3, min_periods=1).mean()
         
         # demand lag features
+        df['demand_lag1']= df['scaled_forecast'].shift(1)
         df['demand_lag7'] = df['scaled_forecast'].shift(7)
         df['demand_lag14'] = df['scaled_forecast'].shift(14)
         
@@ -89,7 +90,7 @@ class LTSMDemandPredictor(DemandPredictor):
             'scaled_temp', 'scaled_forecast',
             'temp_rolling_mean_7d', 'temp_rolling_mean_3d',
             'demand_weekly_mean',   
-            'temp_volatility',       
+            'temp_volatility', 'demand_lag1',     
             'demand_lag7', 'demand_lag14',
             'temp_demand_interaction', 'extreme_temp_flag',
             'demand_change', 'scaled_precip', 
@@ -118,7 +119,7 @@ class LTSMDemandPredictor(DemandPredictor):
         x= Dropout(0.2)(x) # prevent overfitting by randomly dropping 20% of connections
         
         #mul head attention block ( like looking thru data with multiple lenses)
-        #4 heads to look at different aspects
+        #48 heads to look at different aspects
         #key_dim = dimensions of attention comp
         attention_output1 = MultiHeadAttention(
             num_heads=8, key_dim=32 
@@ -126,7 +127,7 @@ class LTSMDemandPredictor(DemandPredictor):
         x= LayerNormalization()(attention_output1+x) # skip connection
         
         #second layer
-        x= Bidirectional(LSTM(64, return_sequences=True))(x) # processes 32 (smaller than first) feats forward and backwards
+        x= Bidirectional(LSTM(64, return_sequences=True))(x) # processes 64 (smaller than first) feats forward and backwards
         x= LayerNormalization()(x) # stablize training
         x= Dropout(0.2)(x) # prevent overfitting by randomly dropping 20% of connections
         
@@ -148,7 +149,7 @@ class LTSMDemandPredictor(DemandPredictor):
         x = Dense(32, activation='relu')(x)
         outputs = Dense(1, activation='linear',
                     kernel_constraint=tf.keras.constraints.MinMaxNorm(
-                        min_value=-3.0, max_value=3.0))(x)
+                        min_value=-3.0, max_value=3.0))(x) #only consider the data from 3std away prevent crazy prediction safe net
         # create the model 
         model = Model(inputs=inputs, outputs=outputs)
         
@@ -162,7 +163,8 @@ class LTSMDemandPredictor(DemandPredictor):
             
             under_pred_penalty = tf.maximum(0.0, y_true -y_pred) *high_demand_mask
             over_pred_penalty = tf.maximum(0.0,y_pred-y_true)* low_demand_mask
-            penalty = 1.7 * tf.reduce_mean(under_pred_penalty) + 1.5 * tf.reduce_mean(over_pred_penalty)
+            penalty = 1.9 * tf.reduce_mean(under_pred_penalty) + 1.5 * tf.reduce_mean(over_pred_penalty)
+            
             return mse +penalty
         
         model.compile(
@@ -202,7 +204,7 @@ class LTSMDemandPredictor(DemandPredictor):
                 min_delta=0.00005
             ),
             tf.keras.callbacks.ModelCheckpoint(
-                'best_model.keras',
+                './model/best_model.keras',
                 monitor='val_loss',
                 save_best_only=True
             )
@@ -268,6 +270,7 @@ class LTSMDemandPredictor(DemandPredictor):
         df['temp_rolling_mean_3d'] = df['scaled_temp'].rolling(window=3, min_periods=1).mean()
         
         # demand lag features
+        df['demand_lag1']= df['scaled_forcast'].shift(1)
         df['demand_lag7'] = df['scaled_forecast'].shift(7)
         df['demand_lag14'] = df['scaled_forecast'].shift(14)
         
@@ -302,7 +305,7 @@ class LTSMDemandPredictor(DemandPredictor):
             'scaled_temp', 'scaled_forecast',
             'temp_rolling_mean_7d', 'temp_rolling_mean_3d',
             'demand_weekly_mean',   
-            'temp_volatility',       
+            'temp_volatility', 'demand_lag1',     
             'demand_lag7', 'demand_lag14',
             'temp_demand_interaction', 'extreme_temp_flag',
             'demand_change', 'scaled_precip', 
@@ -316,7 +319,7 @@ class LTSMDemandPredictor(DemandPredictor):
         return np.expand_dims(sequence, axis=0)
     def plot_analysis(self):
         """Create visualization of LSTM results and training"""
-        fig, ax = plt.subplots(figsize=(12, 6))
+        fig, ((ax1,ax2),(ax3,ax4))=  plt.subplots(2, 2, figsize=(15, 12))
         
         # Get predictions for entire dataset
         X, y = self.prepare_sequences()
@@ -326,30 +329,57 @@ class LTSMDemandPredictor(DemandPredictor):
         y_pred = self.demand_scaler.inverse_transform(y_pred)
         y_true = self.demand_scaler.inverse_transform(y)
         
-        # Plot actual vs predicted
-        ax.scatter(y_true, y_pred, alpha=0.5, color='blue', s=20, label='Predictions')
+        # Plot1 actual vs predicted
+        ax1.scatter(y_true, y_pred, alpha=0.5, color='blue', s=20, label='Predictions')
         
         # Plot perfect prediction line
         min_val = min(y_true.min(), y_pred.min())
         max_val = max(y_true.max(), y_pred.max())
-        ax.plot([min_val, max_val], [min_val, max_val], 'r--', label='Perfect Prediction')
+        ax1.plot([min_val, max_val], [min_val, max_val], 'r--', label='Perfect Prediction')
         
         # Add labels and title
-        ax.set_xlabel('Actual Demand (Megawatthours)')
-        ax.set_ylabel('Predicted Demand (Megawatthours)')
-        ax.set_title('LSTM Model: Actual vs Predicted Demand')
-        ax.legend()
-        ax.grid(True, alpha=0.3)
+        ax1.set_xlabel('Actual Demand (Megawatthours)')
+        ax1.set_ylabel('Predicted Demand (Megawatthours)')
+        ax1.set_title('LSTM Model: Actual vs Predicted Demand')
+        ax1.legend()
+        ax1.grid(True, alpha=0.3)
+        #plot 2 error distrubtion 
+        errors= y_pred.flatten() - y_true.flatten()
+        ax2.hist(errors, bins=50,color='skyblue',edgecolor='black')
+        ax2.axvline(x=0,color='r',linestyle='dashed')
+        ax2.set_title('Prediction Error Distribution')
+        ax2.set_xlabel('Prediction Error (MWh)')
+        ax2.set_ylabel('Frequency')
+        
+        #plot 3 training history
+        if self.history:
+            ax3.plot(self.history.history['loss'], label='Training Loss')
+            ax3.plot(self.history.history['val_loss'],label='Validation Loss')
+            ax3.set_title('Training History')
+            ax3.set_xlabel('Epoch')
+            ax3.set_ylabel('Loss')
+            ax3.legend()
+            
+        #plot 4 residuals vs predicted
+        ax4.scatter(y_pred,errors,alpha=0.5,color='purple',s=20)
+        ax4.axhline(y=0,color='r',linestyle='dashed')
+        ax4.set_title('Residuals vs Predicted VaLues')
+        ax4.set_xlabel('Predicted Demand (MWh)')
+        ax4.set_ylabel('Residual Error (MWh)')
+        
+        
         
         # Add metrics text
         metrics_text = (
-            f'R² = {self.metrics["r2"]:.3f}\n'
-            f'RMSE = {self.metrics["rmse"]:.2f} MWh'
-        )
-        ax.text(0.02, 0.98, metrics_text,
-                transform=ax.transAxes,
-                verticalalignment='top',
-                bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+        f'Model Performance Metrics:\n'
+        f'R² = {self.metrics["r2"]:.3f}\n'
+        f'RMSE = {self.metrics["rmse"]:.2f} MWh\n'
+        f'Mean Error = {np.mean(errors):.2f} MWh\n'
+        f'Std Error = {np.std(errors):.2f} MWh\n'
+    )
+        fig.text(0.02, 0.90, metrics_text, 
+             fontsize=10, 
+             bbox=dict(facecolor='white', alpha=0.8, boxstyle='round'))
         
         plt.tight_layout()
         return fig
