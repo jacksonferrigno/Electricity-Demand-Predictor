@@ -3,7 +3,7 @@ import numpy as np
 from datetime import datetime
 
 from sklearn.metrics import r2_score, mean_squared_error
-from LTSM_predictor import LTSMDemandPredictor
+from predictors.LTSM_predictor import LTSMDemandPredictor
 import tensorflow as tf
 import logging 
 import os

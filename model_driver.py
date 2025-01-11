@@ -1,7 +1,7 @@
-from base_demand_predictor import DemandPredictor
-from seasonal_predictor import SeasonalPredictor
+from predictors.base_demand_predictor import DemandPredictor
+from predictors.seasonal_predictor import SeasonalPredictor
 import matplotlib.pyplot as plt
-from LTSM_predictor import LTSMDemandPredictor
+from predictors.LTSM_predictor import LTSMDemandPredictor
 
 if __name__ == "__main__":
     #config params
