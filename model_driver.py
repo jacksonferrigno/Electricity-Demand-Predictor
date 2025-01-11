@@ -5,8 +5,8 @@ from LTSM_predictor import LTSMDemandPredictor
 
 if __name__ == "__main__":
     #config params
-    START ='2020-07-29'
-    END = '2023-12-31'
+    START ='2021-01-01'
+    END = '2024-12-31'
     print("\n running LSTM analysis...")
     lstm_predictor = LTSMDemandPredictor(START,END)
     

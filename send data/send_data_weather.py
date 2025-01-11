@@ -36,7 +36,7 @@ STATIONS = {
 }
 
 def fetch_weather_data(station_id, date, datatype):
-    time.sleep(0.25)
+    time.sleep(0.1)
     
     params = {
         "datasetid": "GHCND",
@@ -98,8 +98,8 @@ def get_daily_data(date):
         print(f"Error saving data: {e}")
 
 def main():
-    start_date = datetime.strptime("2022-05-09", "%Y-%m-%d")
-    end_date = datetime.strptime("2024-01-01", "%Y-%m-%d")
+    end_date = datetime.strptime("2024-12-31", "%Y-%m-%d")
+    start_date = datetime.strptime("2024-04-29", "%Y-%m-%d")
     current_date = start_date
     
     while current_date <= end_date:
