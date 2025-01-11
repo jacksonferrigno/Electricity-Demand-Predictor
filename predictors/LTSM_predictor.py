@@ -204,7 +204,7 @@ class LTSMDemandPredictor(DemandPredictor):
                 min_delta=0.00005
             ),
             tf.keras.callbacks.ModelCheckpoint(
-                './model/best_model.keras',
+                '/model/best_model.keras',
                 monitor='val_loss',
                 save_best_only=True
             )
