@@ -10,7 +10,7 @@ import xgboost as xgb
 import numpy as np
 import pandas as pd
 
-from predictors.base_demand_predictor import DemandPredictor
+from  predictors.base_demand_predictor import DemandPredictor
 
 class LTSMDemandPredictor(DemandPredictor):
     def __init__(self, start_date, end_date, sequence_length=3, n_clusters=3):
@@ -22,7 +22,18 @@ class LTSMDemandPredictor(DemandPredictor):
         self.model = None  #will hold model once built
         self.history=None # will store training data
         self.attention_weights = None # stores attention weights for model
+    @staticmethod
+    def custom_demand_loss(y_true, y_pred):
+        """extra penalty for under predicting demand"""
+        mse = tf.keras.losses.MSE(y_true,y_pred)
+        high_demand_mask = tf.cast(y_true>tf.reduce_mean(y_true), tf.float32)
+        low_demand_mask = 1.0 - high_demand_mask
         
+        under_pred_penalty = tf.maximum(0.0, y_true -y_pred) *high_demand_mask
+        over_pred_penalty = tf.maximum(0.0,y_pred-y_true)* low_demand_mask
+        penalty = 1.9 * tf.reduce_mean(under_pred_penalty) + 1.5 * tf.reduce_mean(over_pred_penalty)
+        
+        return mse + penalty 
     def prepare_sequences(self):
         """ preps sequences for feat engineering
         
@@ -109,6 +120,7 @@ class LTSMDemandPredictor(DemandPredictor):
             y.append(scaled_demands[i+self.sequence_length])
         
         return np.array(X, dtype='float32'), np.array(y, dtype='float32')
+    
     def build_attention_model(self, n_features):
         """ Build model with bidrectional LSTM and mul head attention"""
         #I/P layer
@@ -154,22 +166,9 @@ class LTSMDemandPredictor(DemandPredictor):
         model = Model(inputs=inputs, outputs=outputs)
         
         
-        #loss function with demand penalty 
-        def custom_demand_loss(y_true, y_pred):
-            """extra penalty for under predicting demand"""
-            mse = tf.keras.losses.MSE(y_true,y_pred)
-            high_demand_mask = tf.cast(y_true>tf.reduce_mean(y_true), tf.float32)
-            low_demand_mask = 1.0 - high_demand_mask
-            
-            under_pred_penalty = tf.maximum(0.0, y_true -y_pred) *high_demand_mask
-            over_pred_penalty = tf.maximum(0.0,y_pred-y_true)* low_demand_mask
-            penalty = 1.9 * tf.reduce_mean(under_pred_penalty) + 1.5 * tf.reduce_mean(over_pred_penalty)
-            
-            return mse +penalty
-        
         model.compile(
             optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
-            loss=custom_demand_loss,
+            loss=self.custom_demand_loss,
             metrics=['mae', 'mse']
         )
         self.model=model
@@ -417,48 +416,3 @@ class LTSMDemandPredictor(DemandPredictor):
             }
         
             return metrics_dict
-    def analyze_features(self):
-        
-        # Get data
-        X, y = self.prepare_sequences()
-        n_samples, seq_length, n_features = X.shape
-        X_reshaped = X.reshape(n_samples, seq_length * n_features)
-        
-        feature_columns = [
-            'scaled_temp', 'scaled_forecast',
-            'temp_rolling_mean_7d', 'temp_rolling_mean_3d',
-            'demand_weekly_mean',   
-            'temp_volatility',       
-             'demand_lag7', 'demand_lag14',
-            'temp_demand_interaction', 'extreme_temp_flag',
-            'demand_change', 'scaled_precip', 
-            'day_sin', 'day_cos', 'seasonal_forecast_deviation'
-        ]
-        
-        # Create feature names with timesteps
-        features = []
-        for t in range(seq_length):
-            for feat in feature_columns:
-                features.append(f"{feat}_t-{seq_length-t}")
-        
-        # Train simple XGBoost model
-        model = xgb.XGBRegressor(n_estimators=100, random_state=42)
-        model.fit(X_reshaped, y)
-        
-        # Get importance scores and sort them
-        importance = dict(zip(features, model.feature_importances_))
-        sorted_importance = dict(sorted(importance.items(), key=lambda x: x[1], reverse=True))
-        
-        # Plot top 10 features
-        plt.figure(figsize=(10, 6))
-        top_features = list(sorted_importance.items())[:10]
-        
-        plt.barh([x[0] for x in top_features], [x[1] for x in top_features])
-        plt.xlabel('Importance Score')
-        plt.title('Top 10 Most Important Features')
-        plt.tight_layout()
-        
-        return {
-            'importance_scores': sorted_importance,
-            'plot': plt.gcf()
-        }
