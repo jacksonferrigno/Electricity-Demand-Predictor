@@ -131,7 +131,7 @@ class LTSMDemandPredictor(DemandPredictor):
         x= Dropout(0.2)(x) # prevent overfitting by randomly dropping 20% of connections
         
         #mul head attention block ( like looking thru data with multiple lenses)
-        #48 heads to look at different aspects
+        #8 heads to look at different aspects
         #key_dim = dimensions of attention comp
         attention_output1 = MultiHeadAttention(
             num_heads=8, key_dim=32 
