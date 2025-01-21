@@ -273,35 +273,3 @@ class LauderdaleGrid:
 
         return self.network
 
-    def solve_power_flow(self):
-        """Solve network optimization"""
-        try:
-            # Set snapshots and weightings
-            self.network.snapshot_weightings = pd.Series(1.0, index=self.network.snapshots)
-            
-            # Set generator availability timeseries
-            for gen in self.network.generators.index:
-                if gen not in self.network.generators_t.p_max_pu:
-                    self.network.generators_t.p_max_pu[gen] = pd.Series(1.0, index=self.network.snapshots)
-            
-            # Try to solve
-            status = self.network.optimize(solver_name="highs")
-            
-            results = {
-                'success': True,
-                'total_generation': float(self.network.generators_t.p.sum().mean()),
-                'total_load': float(self.network.loads_t.p_set.sum().mean()),
-                'max_line_loading': float((abs(self.network.lines_t.p0.max()) / 
-                                        self.network.lines.s_nom * 100).max())
-            }
-            
-            print("\nOptimization Results:")
-            print(f"Total Generation: {results['total_generation']:.2f} MW")
-            print(f"Total Load: {results['total_load']:.2f} MW")
-            print(f"Max Line Loading: {results['max_line_loading']:.2f}%")
-            
-            return results
-            
-        except Exception as e:
-            print(f"Optimization error: {str(e)}")
-            return {'success': False, 'error': str(e)}
