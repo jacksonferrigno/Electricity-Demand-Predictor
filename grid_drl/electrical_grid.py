@@ -64,8 +64,8 @@ class LauderdaleGrid:
 
         # Define thermal limits by voltage level
         self.voltage_thermal_limits = {
-            500: 2000,  # 500 kV -> 2000 MVA (from docs)
-            161: 200    # 161 kV -> 200 MVA (from docs) 
+            500: 3300,  
+            161: 400  
         }
 
     def parse_voltage(self, voltage):
@@ -121,12 +121,14 @@ class LauderdaleGrid:
         for idx, row in lauderdale_gdf.iterrows():
             if row['SUB_1'] and row['SUB_2']:
                 voltage = self.parse_voltage(row['VOLTAGE'])
-                s_nom = self.get_thermal_limit(voltage)
+                s_nom = self.get_thermal_limit(voltage)*1.05
                 
-                # Calculate actual impedance values (not per unit)
+                #length in kms
+                length_km =row["SHAPE__Len"]/1000
+                # Calculate actual impedance values
                 base_z = (voltage**2) / 100  # Using 100 MVA base
-                x = 0.2 * base_z
-                r = 0.02 * base_z
+                x = 0.1 * base_z 
+                r = 0.01 * base_z
                 
                 self.network.add("Line",
                             f"Line_{idx}",
@@ -134,6 +136,7 @@ class LauderdaleGrid:
                             bus1=row['SUB_2'], 
                             v_nom=voltage,
                             s_nom=s_nom,
+                            length=length_km,
                             x=x,          # Using actual impedance instead of per unit
                             r=r,          # Using actual impedance instead of per unit
                             carrier="AC")
@@ -152,10 +155,47 @@ class LauderdaleGrid:
                     ramp_limit_down=params['ramp_limit'],
                     min_up_time=params['min_up_time'])
 
+        
+        
+        # topology and filter out other sub networks
+        self.network.determine_network_topology()
+        #sub network we keep
+        main_sub ="1"
+        to_keep = self.network.buses[self.network.buses["sub_network"] == main_sub].index
+        
+        #keep what we want
+        self.network.buses = self.network.buses.loc[to_keep]
+        self.network.lines= self.network.lines[
+            self.network.lines["bus0"].isin(to_keep) & self.network.lines["bus1"].isin(to_keep)
+        ]
+        self.network.generators = self.network.generators[self.network.generators["bus"].isin(to_keep)]
+        self.network.loads["bus"].isin(to_keep)
+        # add transformers
+        for _, row in self.network.lines.iterrows():
+            bus0_v= self.network.buses.at[row["bus0"],"v_nom"]
+            bus1_v= self.network.buses.at[row["bus1"],"v_nom"]
+            if bus0_v != bus1_v:
+                self.network.add("Transformer",
+                                 f"Transformer_{row.name}",
+                                 bus0=row["bus0"],
+                                 bus1=row["bus1"],
+                                 s_nom=row["s_nom"],
+                                 x=0.9,
+                                 r=0.05,
+                                 v_nom0=bus0_v,
+                                 v_nom1=bus1_v,
+                                 tap_pos=0,
+                                 tap_step_percent=2.5,
+                                 tap_min=-10,
+                                 tap_max=10)
+        # update the stand alone line
+        self.network.lines.at["Line_1024", "s_nom"] *= 3.5  # scale the capacity 
+
         print(f"\nNetwork Creation Summary:")
         print(f"Buses: {len(self.network.buses)}")
         print(f"Lines: {len(self.network.lines)}")
         print(f"Generators: {len(self.network.generators)}")
+        print(f"Transformers: {len(self.network.transformers)}")
         
         return self.network
     def add_loads(self, predictor, input_sequence, scale_factor=0.005):
@@ -273,3 +313,33 @@ class LauderdaleGrid:
 
         return self.network
 
+    def reward(self):
+        #solve 
+        self.network.lpf()
+
+        # 1. calc total demand
+        total_demand = self.network.loads.p_set.sum().sum()
+        supply_demand = self.network.generators_t.p.sum().sum()
+        
+        #is demand met? if so by how much
+        demand_met = supply_demand/total_demand if total_demand>0 else 0
+        reward_demand=10*demand_met
+        
+        #2. calc penalty for thermal violation (big one)
+        p_thermal=0
+        for _, line in self.network.lines.iterrows():
+            if line.name in self.network.lines_t.p0.columns:
+                flow= self.network.lines_t.p0[line.name].max()/line.s_nom 
+                print(f"line {line.name} flow {flow:.2f}")
+                if flow>1:
+                    p_thermal+=1000* (flow-1)**2
+            else:
+                print(f"warning line {line.name } has no flow ")
+        print("="*50)
+        
+        unsupplied_demand =total_demand-supply_demand
+        
+        p_load_shedding = max(0,unsupplied_demand)
+        
+        reward = reward_demand-p_thermal- p_load_shedding
+        return reward             

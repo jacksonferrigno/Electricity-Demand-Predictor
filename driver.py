@@ -34,14 +34,16 @@ def main():
                   input_sequence=day_sequence.reshape(1, -1, day_sequence.shape[-1]),
                   scale_factor=0.012)
     
-    # Solve power flow
-    results = grid.solve_power_flow()
+    # reward check 
+    print("="*50)
+    print("\nreward time")
     
-# Print results
-    if results['success']:
-        print(f"IT WORKED")
-    else:
-        print(f"Power flow failed: {results.get('error', 'Unknown error')}")
+    reward =grid.reward()
+    
+    print(f"calc reward: {reward:.2f}" )
+    
+    print(f" debugging trail:  total demand {network.loads_t.p_set.sum().sum():.2f}, and total gen {network.generators_t.p.sum().sum()}")
+    
 
 
 if __name__ == "__main__":
