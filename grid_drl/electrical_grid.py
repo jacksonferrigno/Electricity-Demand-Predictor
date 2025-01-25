@@ -189,8 +189,11 @@ class LauderdaleGrid:
                                  tap_min=-10,
                                  tap_max=10)
         # update the stand alone line
-        self.network.lines.at["Line_1024", "s_nom"] *= 3.5  # scale the capacity 
-
+        self.network.lines.at["Line_1024", "s_nom"] *= 5.5  # scale the capacity 
+        self.network.lines.at["Line_27871", "s_nom"] *=1.25
+        self.network.lines.at["Line_35936", "s_nom"] *=1.55
+        #solve power flow
+        self.network.lpf()
         print(f"\nNetwork Creation Summary:")
         print(f"Buses: {len(self.network.buses)}")
         print(f"Lines: {len(self.network.lines)}")
