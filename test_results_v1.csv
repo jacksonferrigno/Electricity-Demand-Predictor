@@ -1,4 +1,0 @@
-timestamp,description,r2_score,rmse,win_rate,model_version
-2024-12-29 10:21,Full dataset performance eval,0.8022914609803369,27529.591793319127,51.00401606425703,LSTM_V1.0
-2024-12-29 10:23,Full dataset performance eval,0.903226247138046,19260.42428599622,67.8714859437751,LSTM_V1.0
-
