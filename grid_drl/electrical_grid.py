@@ -9,6 +9,7 @@ class LauderdaleGrid:
         # Store path to network data file and initialize empty network
         self.gpkg_path = gpkg_path
         self.network = None
+        self.actions=None
 
         # Define generation resources with operating parameters 
         self.generators = {
@@ -83,6 +84,7 @@ class LauderdaleGrid:
     def create_network(self):
         """Create core PyPSA network from source data"""
         self.network = pypsa.Network()
+        
         
         # Set up 24 hourly timestamps
         self.network.set_snapshots(range(24))
@@ -199,150 +201,76 @@ class LauderdaleGrid:
         print(f"Lines: {len(self.network.lines)}")
         print(f"Generators: {len(self.network.generators)}")
         print(f"Transformers: {len(self.network.transformers)}")
-        
+        self.actions = self.action_space()
         return self.network
+    
     def add_loads(self, predictor, input_sequence, scale_factor=0.005):
         """Add loads to the network based on predicted demand."""
-        # Predict regional demand using the given predictor model
         tva_demand = predictor.model.predict(input_sequence)
         tva_demand = predictor.demand_scaler.inverse_transform(tva_demand)
         regional_demand = tva_demand.item(0) * scale_factor
 
-        # Calculate total generation capacity and enforce safety limits
+        # Safety limit check
         total_capacity = sum(params['capacity'] for params in self.generators.values())
-        max_safe_load = total_capacity * 0.8  # 80% of total capacity
+        max_safe_load = total_capacity * 0.8
 
+        # Introduce variability with a random scaling factor
+        variation_factor = np.random.uniform(0.9, 1.1)  # 10% random variation
+        regional_demand *= variation_factor
+
+        # Apply safety limit check with variability considered
         if regional_demand > max_safe_load:
-            old_scale = scale_factor
             scale_factor *= max_safe_load / regional_demand
-            print(f"\nWARNING: Adjusting scale factor from {old_scale:.6f} to {scale_factor:.6f}")
-            print(f"Original demand {regional_demand:.2f} MW exceeded safe limit of {max_safe_load:.2f} MW")
             regional_demand = max_safe_load
+        elif regional_demand < 0.5 * max_safe_load:  # Prevent excessively low demand
+            regional_demand = 0.5 * max_safe_load  # Set a minimum threshold for demand
+        for gen in self.network.generators.index:
+            self.network.generators.at[gen, 'p_max_pu'] = np.random.uniform(0.7, 1.0)  # 70%-100% capacity
+            self.network.generators.at[gen, 'p_nom_max'] = (
+            self.network.generators.at[gen, 'p_nom'] * self.network.generators.at[gen, 'p_max_pu']
+            )
+            self.network.generators.at[gen, 'p_nom_min'] = 0  # Minimum dispatch
+        # Set up snapshots
+        snapshots = pd.date_range("2025-01-01", periods=24, freq="H")
+        self.network.set_snapshots(snapshots)
 
-        # Ensure the network has snapshots set for the 24-hour profile
-        self.network.set_snapshots(pd.date_range("2025-01-01", periods=24, freq="H"))
+        # Clear existing loads
+        self.network.loads = pd.DataFrame()
 
-        # Remove existing loads
-        for bus in list(self.network.loads.index):
-            try:
-                self.network.remove("Load", bus)
-            except KeyError:
-                pass
-
-        # Define load distribution based on substation roles
+        # Load distribution
         load_distribution = {
-            'DECATUR': {
-                'share': 0.15,        # Major industrial
-                'type': 'industrial',
-                'peak_hour': 14
-            },
-            'TRINITY': {
-                'share': 0.12,
-                'type': 'mixed',
-                'peak_hour': 18
-            },
-            'LIMESTONE': {
-                'share': 0.12,
-                'type': 'residential',
-                'peak_hour': 19
-            },
-            'CHEROKEE': {
-                'share': 0.12,
-                'type': 'mixed',
-                'peak_hour': 17
-            },
-            'SHOALS': {
-                'share': 0.12,
-                'type': 'industrial',
-                'peak_hour': 13
-            },
-            'WAYNESBORO': {
-                'share': 0.12,
-                'type': 'residential',
-                'peak_hour': 20
-            },
-            'PULASKI': {
-                'share': 0.12,
-                'type': 'residential',
-                'peak_hour': 19
-            },
-            'UNION': {
-                'share': 0.13,
-                'type': 'mixed',
-                'peak_hour': 16
-            }
+            'DECATUR': {'share': 0.15, 'type': 'industrial', 'peak_hour': 14},
+            'TRINITY': {'share': 0.12, 'type': 'mixed', 'peak_hour': 18},
+            'LIMESTONE': {'share': 0.12, 'type': 'residential', 'peak_hour': 19},
+            'CHEROKEE': {'share': 0.12, 'type': 'mixed', 'peak_hour': 17},
+            'SHOALS': {'share': 0.12, 'type': 'industrial', 'peak_hour': 13},
+            'WAYNESBORO': {'share': 0.12, 'type': 'residential', 'peak_hour': 20},
+            'UNION': {'share': 0.13, 'type': 'mixed', 'peak_hour': 16}
         }
-
-        print("\nLoad Distribution Analysis")
-        print('=' * 50)
-        print(f"{'Location':<15}{'Type':<12} {'Share':<10} {'Base Load (MW)':<15}")
-        print('=' * 50)
 
         for bus, params in load_distribution.items():
             if bus in self.network.buses.index:
                 base_load = regional_demand * params['share']
-
-                # Generate 24-hour load profile
-                load_profile = []
-                for hour in range(24):
-                    if params['type'] == 'industrial':
-                        # Industrial load peaks during working hours
-                        if 8 <= hour <= 17:
-                            factor = 0.9 + 0.2 * np.sin(np.pi * (hour - 8) / 9)
-                        else:
-                            factor = 0.6
-                    elif params['type'] == 'residential':
-                        # Residential load has a double peak (morning and evening)
-                        morning_peak = 0.7 + 0.3 * np.exp(-(hour - 7) ** 2 / 8)
-                        evening_peak = 0.8 + 0.2 * np.exp(-(hour - params['peak_hour']) ** 2 / 8)
-                        factor = max(morning_peak, evening_peak)
-                    else:
-                        # Mixed load blends profiles
-                        factor = 0.7 + 0.3 * np.exp(-(hour - params['peak_hour']) ** 2 / 16)
-
-                    load_value = base_load * factor
-                    load_profile.append(load_value)
-
-                self.network.add(
-                    "Load",
+                load_profile = self._generate_load_profile(base_load, params, snapshots)
+                
+                self.network.add("Load",
                     f"load_{bus}",
                     bus=bus,
-                    p_set=pd.Series(load_profile, index=self.network.snapshots),  # Align with snapshots
-                    q_set=0.0,
-                    type=params['type']
-                )
-
-                print(f"{bus:<15} {params['type']:<12} {params['share'] * 100:>6.1f}%  {base_load:>10.2f}")
+                    p_set=pd.Series(load_profile, index=snapshots))
 
         return self.network
 
-    def reward(self):
-        #solve 
-        self.network.lpf()
-
-        # 1. calc total demand
-        total_demand = self.network.loads.p_set.sum().sum()
-        supply_demand = self.network.generators_t.p.sum().sum()
-        
-        #is demand met? if so by how much
-        demand_met = supply_demand/total_demand if total_demand>0 else 0
-        reward_demand=10*demand_met
-        
-        #2. calc penalty for thermal violation (big one)
-        p_thermal=0
-        for _, line in self.network.lines.iterrows():
-            if line.name in self.network.lines_t.p0.columns:
-                flow= self.network.lines_t.p0[line.name].max()/line.s_nom 
-                print(f"line {line.name} flow {flow:.2f}")
-                if flow>1:
-                    p_thermal+=1000* (flow-1)**2
-            else:
-                print(f"warning line {line.name } has no flow ")
-        print("="*50)
-        
-        unsupplied_demand =total_demand-supply_demand
-        
-        p_load_shedding = max(0,unsupplied_demand)
-        
-        reward = reward_demand-p_thermal- p_load_shedding
-        return reward             
+    def _generate_load_profile(self, base_load, params, snapshots):
+        """Generate 24-hour load profile based on load type."""
+        profile = []
+        for hour in range(24):
+            if params['type'] == 'industrial':
+                factor = 0.9 + 0.2 * np.sin(np.pi * (hour - 8) / 9) if 8 <= hour <= 17 else 0.6
+            elif params['type'] == 'residential':
+                morning = 0.7 + 0.3 * np.exp(-(hour - 7) ** 2 / 8)
+                evening = 0.8 + 0.2 * np.exp(-(hour - params['peak_hour']) ** 2 / 8)
+                factor = max(morning, evening)
+            else:  # mixed
+                factor = 0.7 + 0.3 * np.exp(-(hour - params['peak_hour']) ** 2 / 16)
+            profile.append(base_load * factor)
+        return profile
