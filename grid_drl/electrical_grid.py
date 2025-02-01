@@ -9,7 +9,6 @@ class LauderdaleGrid:
         # Store path to network data file and initialize empty network
         self.gpkg_path = gpkg_path
         self.network = None
-        self.actions=None
 
         # Define generation resources with operating parameters 
         self.generators = {
@@ -201,7 +200,6 @@ class LauderdaleGrid:
         print(f"Lines: {len(self.network.lines)}")
         print(f"Generators: {len(self.network.generators)}")
         print(f"Transformers: {len(self.network.transformers)}")
-        self.actions = self.action_space()
         return self.network
     
     def add_loads(self, predictor, input_sequence, scale_factor=0.005):
