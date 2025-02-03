@@ -1,6 +1,7 @@
 import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
+import copy
 
 class PowerGridEnv(gym.Env):
     def __init__(self, grid, max_steps=100, action_limit=0.1):
@@ -21,7 +22,7 @@ class PowerGridEnv(gym.Env):
         )
         
         # State space: Generator outputs + load demands
-        self.state_size = self.num_generators + len(self.grid.loads)
+        self.state_size = 2* self.num_generators + len(self.grid.loads)
         self.observation_space = spaces.Box(
             low=-1,
             high=1,
@@ -56,7 +57,7 @@ class PowerGridEnv(gym.Env):
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
-        self.grid = self.grid_model.network
+        self.grid = copy.deepcopy(self.grid_model.network)
         self.current_step = 0
         self.previous_violations = 0
         self.state = self._get_state().astype(np.float32)
@@ -74,54 +75,57 @@ class PowerGridEnv(gym.Env):
     def _get_state(self):
         generator_outputs = self.grid.generators["p_nom"].values
         load_demands = self.grid.loads["p_set"].values
+        marginal_cost= self.grid.generators["marginal_cost"].values
+
 
         # Avoid division by zero by setting a safe normalization factor
         max_gen_output = max(np.max(generator_outputs), 1e-6)
         max_load = max(np.max(load_demands), 1e-6)
+        max_cost= max(np.max(marginal_cost),1e-6)
 
         # Normalize to [-1, 1] range
         generator_outputs = (generator_outputs / max_gen_output) * 2 - 1
         load_demands = (load_demands / max_load) * 2 - 1
+        marginal_cost=(marginal_cost/max_cost)*2-1
+        #concatinate shape
+        state = np.concatenate([generator_outputs, load_demands, marginal_cost]).astype(np.float32)
 
-        # Ensure correct sizes by padding missing values with zeros
-        generator_outputs = np.pad(generator_outputs, (0, self.num_generators - len(generator_outputs)), mode='constant')
-        load_demands = np.pad(load_demands, (0, (self.state_size - self.num_generators) - len(load_demands)), mode='constant')
-
-        # Concatenate and ensure float32 dtype
-        state = np.concatenate([generator_outputs, load_demands]).astype(np.float32)
-
-        # Debugging: Check the new state values
-        if np.any(state < -1) or np.any(state > 1):
-            print(" Warning: State values are out of bounds!", state)
+        print(f"Final state shape (should match observation space {self.state_size}): {state.shape}")
 
         return state
-
     def _calculate_reward(self):
         # Demand-supply mismatch penalty
         total_demand = self.grid.loads["p_set"].sum()
         total_generation = self.grid.generators["p_nom"].sum()
         mismatch = abs(total_generation - total_demand)
-        reward = -mismatch * 0.01
+        reward = -mismatch * 0.005
         
         # Thermal violations penalty
         if "loading" in self.grid.lines.columns:
             thermal_violations = sum(self.grid.lines["loading"] > 100)
-            reward -= (thermal_violations *0.5)
+            reward -= (thermal_violations *0.30)
             
             # Reward for reducing violations
             violation_change = thermal_violations - self.previous_violations
-            reward += max(0, -violation_change) * 3
+            reward += max(0, -violation_change) * 1.1
             self.previous_violations = thermal_violations
             
         if mismatch<50: #mismatch is small : positive reward
-            reward +=5*(0.4 *mismatch) # better reward as it gets closer to 0
+            reward +=1.1*(0.4 *mismatch) # better reward as it gets closer to 0
             
         #reward for grid stability 
         gen_variability = np.std(self.grid.generators["p_nom"].values)
-        reward -=gen_variability *0.01 # small penalty for instability
+        reward -=gen_variability *0.005 # small penalty for instability
         
         if gen_variability<5:
-            reward+=2500
+            reward+=50
+        
+        #marginal cost penalty
+        gen_cost= sum(
+            self.grid.generators.loc[gen,"p_nom"] * self.grid.generators.loc[gen,"marginal_cost"]
+            for gen in self.grid.generators.index
+        )
+        reward-= 0.025 * gen_cost
             
         return float(reward)
 

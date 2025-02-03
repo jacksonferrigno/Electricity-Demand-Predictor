@@ -6,7 +6,7 @@ from grid_drl.drl import PowerGridEnv
 
 from stable_baselines3 import PPO
 from  stable_baselines3.common.env_checker import check_env
-from stable_baselines3.common.callbacks import ProgressBarCallback
+from stable_baselines3.common.callbacks import ProgressBarCallback, EvalCallback
 
 import gymnasium as gym
 from gymnasium.envs.registration import register 
@@ -49,8 +49,17 @@ def main():
    
    env = gym.make('PowerGridEnv-v0', grid=grid)
    check_env(env, warn=True)
-   model = PPO("MlpPolicy", env, gamma=0.98, verbose=1, tensorboard_log="./ppo_logs_v2/")
-   model.learn(total_timesteps=50000, callback= ProgressBarCallback())
+   model = PPO("MlpPolicy", env, gamma=0.98, verbose=1, tensorboard_log="./ppo_logs_v3/")
+   eval_callback = EvalCallback(
+      env,
+      best_model_save_path="./best_model/",
+      log_path="./logs/",
+      eval_freq=2048,
+      n_eval_episodes=5,
+      deterministic=True,
+      render=False
+   )
+   model.learn(total_timesteps=23000, callback= [ProgressBarCallback(),eval_callback])
    
    # save model
    model.save("ppo_powergrid_model")
@@ -59,3 +68,4 @@ def main():
 
 if __name__ == "__main__":
    main()
+   
