@@ -12,6 +12,7 @@ import gymnasium as gym
 from gymnasium.envs.registration import register 
 ##############
 ##############
+
 GPKG_PATH = "grid_drl/Electric-Power-Transmission-Lines.gpkg"
 MODEL_PATH = "predictors/model/best_model.keras"
 START = '2021-01-01'
@@ -50,16 +51,7 @@ def main():
    env = gym.make('PowerGridEnv-v0', grid=grid)
    check_env(env, warn=True)
    model = PPO("MlpPolicy", env, gamma=0.98, verbose=1, tensorboard_log="./ppo_logs_v3/")
-   eval_callback = EvalCallback(
-      env,
-      best_model_save_path="./best_model/",
-      log_path="./logs/",
-      eval_freq=2048,
-      n_eval_episodes=5,
-      deterministic=True,
-      render=False
-   )
-   model.learn(total_timesteps=23000, callback= [ProgressBarCallback(),eval_callback])
+   model.learn(total_timesteps=100000, callback= ProgressBarCallback())
    
    # save model
    model.save("ppo_powergrid_model")
