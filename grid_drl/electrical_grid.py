@@ -209,7 +209,7 @@ class LauderdaleGrid:
         regional_demand = tva_demand.item(0) * scale_factor
 
         # Safety limit check
-        total_capacity = sum(params['capacity'] for params in self.generators.values())
+        total_capacity = self.network.generators["p_nom"].sum()
         max_safe_load = total_capacity * 0.8
 
         # Introduce variability with a random scaling factor
@@ -250,11 +250,21 @@ class LauderdaleGrid:
             if bus in self.network.buses.index:
                 base_load = regional_demand * params['share']
                 load_profile = self._generate_load_profile(base_load, params, snapshots)
-                
-                self.network.add("Load",
+
+                print(f"Adding load for {bus}: Base Load = {base_load:.4f}")
+                print(f"Load Profile for {bus}: {load_profile}")
+
+                self.network.add(
+                    "Load",
                     f"load_{bus}",
                     bus=bus,
-                    p_set=pd.Series(load_profile, index=snapshots))
+                    p_set=float(base_load)
+                )
+
+        # After adding loads, check if they were actually set
+        print("\n=== Loads After Addition ===")
+        print(self.network.loads)
+        print("============================\n")
 
         return self.network
 

@@ -57,7 +57,6 @@ def main():
    model.save("ppo_powergrid_model")
    print("training complete")
 
-
 if __name__ == "__main__":
    main()
    

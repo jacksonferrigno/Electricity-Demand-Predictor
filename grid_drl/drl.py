@@ -11,6 +11,8 @@ class PowerGridEnv(gym.Env):
         self.grid = grid.network
         self.max_steps = max_steps
         self.action_limit = action_limit
+        self.grid.loads["p_set"] = self.grid.loads["p_set"].astype(np.float64)
+        self.initial_demand = self.grid.loads["p_set"].copy()
         
         #counts from the grid 
         self.num_generators = len(self.grid.generators)
@@ -62,11 +64,18 @@ class PowerGridEnv(gym.Env):
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
+        
+        # Reset the grid from the original model.
         self.grid = copy.deepcopy(self.grid_model.network)
+        
+        print("Loads in reset:", self.grid.loads["p_set"])
         self.current_step = 0
         self.previous_violations = 0
         self.state = self._get_state().astype(np.float32)
-        return self.state,{}
+        return self.state, {}
+
+
+
 
     def _apply_action(self, action):
         """Action vector updates: gen output, transformer tap positions, and load shedding 
@@ -177,57 +186,58 @@ class PowerGridEnv(gym.Env):
         return state
     def _calculate_reward(self):
         # Demand-supply mismatch penalty
+        prize=0
+        punishment=0
         reward=0
         total_demand = self.grid.loads["p_set"].sum()
         total_generation = self.grid.generators["p_nom"].sum()
         mismatch = abs(total_generation - total_demand)
-        reward = -mismatch * 0.025
+        #supply and demand balance -> reward
+        if mismatch<20:
+            prize+=1000
+            
+        #punishment if imbalance 
+        punishment+= mismatch*0.010
         
-        # Thermal violations penalty
+        
+        # Thermal violations penalty harsh penalty 
         if "loading" in self.grid.lines.columns:
             thermal_violations = sum(self.grid.lines["loading"] > 100)
-            reward -= (thermal_violations *.30)
-            # Reward for reducing violations
-            violation_change = thermal_violations - self.previous_violations
-            reward += max(0, -violation_change) * 1.1
-            self.previous_violations = thermal_violations
+            punishment+=thermal_violations*5 
             
 
-            # Transformer tap penalty (penalize deviation from 0).
-        if self.num_transformers:
-            tap_penalty = np.sum(np.abs(self.grid.transformers["tap_pos"].values))
-            reward -= tap_penalty * 0.0095
-            
+        #punishment for load shedding ---more load shedding =bad --- 
         if "p_base" in self.grid.loads.columns:
             shed_total = sum(self.grid.loads["p_base"]-self.grid.loads["p_set"])
-            reward -= shed_total *0.0085
+            punishment += shed_total *0.015 # weight on shedding loads
+
             
-        if mismatch<50: #mismatch is small : positive reward
-            reward +=2000# better reward as it gets closer to 0
-            
-        #reward for grid stability 
+        #punishment for grid stability 
         gen_variability = np.std(self.grid.generators["p_nom"].values)
-        reward -=gen_variability *0.008 # small penalty for instability
+        punishment +=gen_variability *0.025 #  penalty for instability
         
         if gen_variability<5:
-            reward+=1200
+            prize+=175
         
         #marginal cost penalty
         gen_cost= sum(
             self.grid.generators.loc[gen,"p_nom"] * self.grid.generators.loc[gen,"marginal_cost"]
             for gen in self.grid.generators.index
         )
-        reward-= 0.009 * gen_cost
+        punishment+= 0.00002 * gen_cost
         # Additional bonus for minimal load shedding.
         if "p_base" in self.grid.loads.columns:
             if (self.grid.loads["p_base"] - self.grid.loads["p_set"]).sum() < 5:
-                reward += 1200
+                prize += 225
 
         # Bonus if there are no thermal overloads.
         if "loading" in self.grid.lines.columns:
             if (self.grid.lines["loading"] > 100).sum() == 0:
-                reward += 1200
-
+                prize += 300
+        reward = prize-punishment
+        print(f"=======PRIZE REPORT=======")
+        print(f"Reward {reward:.2f} Demand: {total_demand:.2f}, Supply {total_generation:.2f}")
+        print("="*25)
         return float(reward)
 
     def _check_done(self):
