@@ -193,23 +193,29 @@ class PowerGridEnv(gym.Env):
         total_generation = self.grid.generators["p_nom"].sum()
         mismatch = abs(total_generation - total_demand)
         #supply and demand balance -> reward
-        if mismatch<20:
+        oversupply=(total_generation-total_demand)
+        if 0< oversupply < 200:
+            prize+=1500 
+        elif mismatch<50:
             prize+=1000
+        if oversupply >=205:
+            punishment+=(oversupply-205)*.1
             
         #punishment if imbalance 
-        punishment+= mismatch*0.010
+        if mismatch>500:
+            punishment+=200
         
         
         # Thermal violations penalty harsh penalty 
         if "loading" in self.grid.lines.columns:
             thermal_violations = sum(self.grid.lines["loading"] > 100)
-            punishment+=thermal_violations*5 
+            punishment+=thermal_violations*4.5 
             
 
         #punishment for load shedding ---more load shedding =bad --- 
         if "p_base" in self.grid.loads.columns:
             shed_total = sum(self.grid.loads["p_base"]-self.grid.loads["p_set"])
-            punishment += shed_total *0.015 # weight on shedding loads
+            punishment += shed_total *0.01 # weight on shedding loads
 
             
         #punishment for grid stability 
@@ -233,7 +239,7 @@ class PowerGridEnv(gym.Env):
         # Bonus if there are no thermal overloads.
         if "loading" in self.grid.lines.columns:
             if (self.grid.lines["loading"] > 100).sum() == 0:
-                prize += 300
+                prize += 200
         reward = prize-punishment
         print(f"=======PRIZE REPORT=======")
         print(f"Reward {reward:.2f} Demand: {total_demand:.2f}, Supply {total_generation:.2f}")
