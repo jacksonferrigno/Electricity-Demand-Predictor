@@ -157,7 +157,6 @@ class PowerGridEnv(gym.Env):
         # Avoid division by zero by setting a safe normalization factor
         max_gen_output = max(np.max(generator_outputs), 1e-6)
         max_load = max(np.max(load_demands), 1e-6)
-        max_cost= max(np.max(marginal_cost),1e-6)
 
         # Normalize to [-1, 1] range
         generator_outputs = (generator_outputs / max_gen_output) * 2 - 1
@@ -189,6 +188,7 @@ class PowerGridEnv(gym.Env):
         prize=0
         punishment=0
         reward=0
+        
         total_demand = self.grid.loads["p_set"].sum()
         total_generation = self.grid.generators["p_nom"].sum()
         mismatch = abs(total_generation - total_demand)

@@ -85,3 +85,7 @@ class DatabaseHandler:
         
         print(f"Found {len(demand_data)} demand records")
         print(f"Found {len(weather_data)} weather records")
+        
+        
+        
+        
