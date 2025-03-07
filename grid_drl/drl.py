@@ -1,7 +1,9 @@
 import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
+import pandas as pd
 import copy
+import json
 
 class PowerGridEnv(gym.Env):
     def __init__(self, grid, max_steps=100, action_limit=0.1):
@@ -13,6 +15,10 @@ class PowerGridEnv(gym.Env):
         self.action_limit = action_limit
         self.grid.loads["p_set"] = self.grid.loads["p_set"].astype(np.float64)
         self.initial_demand = self.grid.loads["p_set"].copy()
+        
+        self.best_blackout_risk=1.0
+        self.best_brownout_risk=1.0
+        
         
         #counts from the grid 
         self.num_generators = len(self.grid.generators)
@@ -193,8 +199,21 @@ class PowerGridEnv(gym.Env):
         punishment=0
         reward=0
         
+        #risk calculations
+        blackout_risk=0
+        brownout_risk=0
+        
         total_demand = self.grid.loads["p_set"].sum()
         total_generation = self.grid.generators["p_nom"].sum()
+        
+        #  **BLACKOUT RISK** significant overload from high demand
+        if(total_demand/total_generation>=1.2):
+            blackout_risk+=.25
+        # **BROWNOUT RISK** slight overload on
+        elif(total_demand/total_generation>=1.00):
+            brownout_risk+=.25
+            
+        # get mismatch
         mismatch = abs(total_generation - total_demand)
         #supply and demand balance -> reward
         oversupply=(total_generation-total_demand)
@@ -215,19 +234,43 @@ class PowerGridEnv(gym.Env):
             thermal_violations = sum(self.grid.lines["loading"] > 100)
             punishment+=thermal_violations*4.5 
             
+            # **BLACKOUT RISK** at least 7 lines exceeding thermal limits
+            if (thermal_violations>=7):
+                blackout_risk+=0.25
+                
+            #potential **BROWNOUT RISK** if we have a thermal limit violation
+            elif(thermal_violations>1):
+                brownout_risk+=.25
+                
 
         #punishment for load shedding ---more load shedding =bad --- 
         if "p_base" in self.grid.loads.columns:
             shed_total = sum(self.grid.loads["p_base"]-self.grid.loads["p_set"])
             punishment += shed_total *0.01 # weight on shedding loads
 
+            # **BLACKOUT RISK** if load shedding >250 MWh
+            if (shed_total>=250):
+                blackout_risk+=0.25
+            #if we have a shed amount there is likely a brownout
+            elif(shed_total>=25):
+                brownout_risk+=0.25
             
-        #punishment for grid stability 
+        #punishment for grid instability 
         gen_variability = np.std(self.grid.generators["p_nom"].values)
         punishment +=gen_variability *0.025 #  penalty for instability
         
         if gen_variability<5:
             prize+=175
+        
+        
+        gen_usuage_percentage= (self.grid.generators["p_nom"]/self.grid.generators["p_nom_max"])*100
+        # ** BLACKOUT RISK ** Generators reaching max capacity 
+        #iff more than half of generators are 95% cap
+        if(gen_usuage_percentage>95).mean() >0.50:
+            blackout_risk+=0.25
+        #**BROWNOUT RISK** more than half of generators are at 90% cap
+        elif(gen_usuage_percentage>90).mean() >0.50:
+            brownout_risk+=0.25
         
         #marginal cost penalty
         gen_cost= sum(
@@ -244,10 +287,31 @@ class PowerGridEnv(gym.Env):
         if "loading" in self.grid.lines.columns:
             if (self.grid.lines["loading"] > 100).sum() == 0:
                 prize += 200
+                
+                
+                
+        # calc reward 
         reward = prize-punishment
         print(f"=======PRIZE REPORT=======")
         print(f"Reward {reward:.2f} Demand: {total_demand:.2f}, Supply {total_generation:.2f}")
         print("="*25)
+        
+        #update flag for saving to json -- use list to prevent scope issue
+        update=[False]
+        # Update best values only if we find a lower (better) risk
+        if blackout_risk < self.best_blackout_risk:
+            self.best_blackout_risk = blackout_risk
+            update[0]=[True]
+
+        # samesies for brownout 
+        if brownout_risk < self.best_brownout_risk:
+            self.best_brownout_risk = brownout_risk
+            update[0]=True
+            
+        if update[0]:
+            self._save_to_json(float(reward))
+
+        
         return float(reward)
 
     def _check_done(self):
@@ -259,3 +323,21 @@ class PowerGridEnv(gym.Env):
                 return True
                 
         return False
+    
+    
+    def _save_to_json(self, reward):
+        df =pd.DataFrame([{
+            "iteration": self.current_step,
+            "best_blackout_risk": self.best_blackout_risk,
+            "best_brownout_risk": self.best_brownout_risk,
+            "reward": reward
+        }])
+        json_file="performance.json"
+        
+        try:
+            with open (json_file,"r") as file:
+                data=json.load(file)
+        except (FileNotFoundError, json.JSONDecodeError):
+            data={"best_results": []}
+        
+        data["best_results"].append(df.to_dict(orient="records")[0])
