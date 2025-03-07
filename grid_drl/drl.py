@@ -19,7 +19,7 @@ class PowerGridEnv(gym.Env):
         self.num_transformers= len(self.grid.transformers) if "transformers" in self.grid.__dict__ or not self.grid.transformers.empty else 0
         self.num_loads = len(self.grid.loads)
         
-        # Action space: Generator output adjustments
+        # Action space: Generator output adjustments + transformer taps + load shedding 
         self.total_actions = self.num_generators +self.num_transformers + self.num_loads
         self.action_space = spaces.Box(
             low=-1,
@@ -28,7 +28,7 @@ class PowerGridEnv(gym.Env):
             dtype=np.float32
         )
         
-        # State space: Generator outputs + load demands
+        # State space: Generator outputs + load demands + transformers
         self.state_size = 2* self.num_generators + self.num_loads+self.num_transformers
         self.observation_space = spaces.Box(
             low=-1,
@@ -101,14 +101,17 @@ class PowerGridEnv(gym.Env):
             capacity = (self.grid.generators.at[gen_name, "p_nom_max"]
                         if "p_nom_max" in self.grid.generators.columns
                         else self.grid.generators.at[gen_name,"p_nom"])
+            
             # calculate the min allowed in output based on a % of capacity 
             min_output = self.grid.generators.at[gen_name, "p_min_pu"]*capacity
             
             # calculate the change  allowed in output based on a % of capacity 
             delta= current* adj
+            
             # limit change by ramp limit 
             max_delta= ramp *capacity
             delta=np.clip(delta,-max_delta,max_delta)
+            
             # compute input and make sure we didnt make a mistake
             new_output= np.clip(current+delta, min_output, capacity)
             self.grid.generators.at[gen_name,"p_nom"] = new_output
@@ -126,6 +129,7 @@ class PowerGridEnv(gym.Env):
             tap_step = (self.grid.transformers.at[trans_name, "tap_step_percent"]
                         if "tap_step_percent" in self.grid.transformers.columns
                         else 2.5)
+            
             #ensure we stay within range
             new_tap = np.clip(current_tap+tap_adj *tap_step,tap_min,tap_max)
             #update 
