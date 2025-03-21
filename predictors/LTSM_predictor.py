@@ -22,6 +22,7 @@ class LTSMDemandPredictor(DemandPredictor):
         self.model = None  #will hold model once built
         self.history=None # will store training data
         self.attention_weights = None # stores attention weights for model
+        
     @staticmethod
     def custom_demand_loss(y_true, y_pred):
         """extra penalty for under predicting demand"""
@@ -31,7 +32,7 @@ class LTSMDemandPredictor(DemandPredictor):
         
         under_pred_penalty = tf.maximum(0.0, y_true -y_pred) *high_demand_mask
         over_pred_penalty = tf.maximum(0.0,y_pred-y_true)* low_demand_mask
-        penalty = 1.9 * tf.reduce_mean(under_pred_penalty) + 1.5 * tf.reduce_mean(over_pred_penalty)
+        penalty = 1.9 * tf.reduce_mean(under_pred_penalty) + 1.6 * tf.reduce_mean(over_pred_penalty)
         
         return mse + penalty 
     def prepare_sequences(self):
@@ -159,9 +160,7 @@ class LTSMDemandPredictor(DemandPredictor):
         x = Dropout(0.3)(x)
         # Add a constraint layer to help with extreme values
         x = Dense(32, activation='relu')(x)
-        outputs = Dense(1, activation='linear',
-                    kernel_constraint=tf.keras.constraints.MinMaxNorm(
-                        min_value=-3.0, max_value=3.0))(x) #only consider the data from 3std away prevent crazy prediction safe net
+        outputs = Dense(1, activation='linear')(x) 
         # create the model 
         model = Model(inputs=inputs, outputs=outputs)
         

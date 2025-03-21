@@ -1,3 +1,4 @@
+import os
 import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
@@ -294,6 +295,9 @@ class PowerGridEnv(gym.Env):
         reward = prize-punishment
         print(f"=======PRIZE REPORT=======")
         print(f"Reward {reward:.2f} Demand: {total_demand:.2f}, Supply {total_generation:.2f}")
+        print(f"=======BLACKOUT REPORT=======")
+        print(f"Blackout risk {blackout_risk:.2f} Brownout risk {brownout_risk:.2f}")
+
         print("="*25)
         
         #update flag for saving to json -- use list to prevent scope issue
@@ -301,15 +305,15 @@ class PowerGridEnv(gym.Env):
         # Update best values only if we find a lower (better) risk
         if blackout_risk < self.best_blackout_risk:
             self.best_blackout_risk = blackout_risk
-            update[0]=[True]
+            update[0]= True
 
         # samesies for brownout 
         if brownout_risk < self.best_brownout_risk:
             self.best_brownout_risk = brownout_risk
             update[0]=True
             
-        if update[0]:
-            self._save_to_json(float(reward))
+        if update[0] and (self.current_step+1) %100 ==0:
+            self._save_to_csv(float(reward))
 
         
         return float(reward)
@@ -325,19 +329,17 @@ class PowerGridEnv(gym.Env):
         return False
     
     
-    def _save_to_json(self, reward):
+    def _save_to_csv(self, reward):
         df =pd.DataFrame([{
             "iteration": self.current_step,
             "best_blackout_risk": self.best_blackout_risk,
             "best_brownout_risk": self.best_brownout_risk,
             "reward": reward
         }])
-        json_file="performance.json"
-        
-        try:
-            with open (json_file,"r") as file:
-                data=json.load(file)
-        except (FileNotFoundError, json.JSONDecodeError):
-            data={"best_results": []}
-        
-        data["best_results"].append(df.to_dict(orient="records")[0])
+        csv_file="performance.csv"
+        if not os.path.exists(csv_file):
+            df.to_csv(csv_file, index=False) #create it 
+        else:
+            df.to_csv(csv_file, mode="a",index=False,header=False) #add to it 
+        if self.current_step %100 ==0:
+            print(f"Saved best iteration {self.current_step} to CSV")

@@ -1,0 +1,23 @@
+{
+    "baseline": null,
+    "best_results": [
+        {
+            "iteration": 0,
+            "best_blackout_risk": 0.5,
+            "best_brownout_risk": 0,
+            "reward": -398.0476452091651
+        },
+        {
+            "iteration": 4,
+            "best_blackout_risk": 0.25,
+            "best_brownout_risk": 0,
+            "reward": -319.61639346373306
+        },
+        {
+            "iteration": 7,
+            "best_blackout_risk": 0,
+            "best_brownout_risk": 0,
+            "reward": -268.0413903722621
+        }
+    ]
+}
