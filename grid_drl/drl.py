@@ -4,7 +4,6 @@ from gymnasium import spaces
 import numpy as np
 import pandas as pd
 import copy
-import json
 
 class PowerGridEnv(gym.Env):
     def __init__(self, grid, max_steps=100, action_limit=0.1):
@@ -195,7 +194,7 @@ class PowerGridEnv(gym.Env):
 
         return state
     def _calculate_reward(self):
-        # Demand-supply mismatch penalty
+        
         prize=0
         punishment=0
         reward=0
@@ -203,7 +202,7 @@ class PowerGridEnv(gym.Env):
         #risk calculations
         blackout_risk=0
         brownout_risk=0
-        
+        # Demand-supply mismatch penalty
         total_demand = self.grid.loads["p_set"].sum()
         total_generation = self.grid.generators["p_nom"].sum()
         
@@ -300,19 +299,15 @@ class PowerGridEnv(gym.Env):
 
         print("="*25)
         
-        #update flag for saving to json -- use list to prevent scope issue
-        update=[False]
         # Update best values only if we find a lower (better) risk
         if blackout_risk < self.best_blackout_risk:
             self.best_blackout_risk = blackout_risk
-            update[0]= True
 
         # samesies for brownout 
         if brownout_risk < self.best_brownout_risk:
             self.best_brownout_risk = brownout_risk
-            update[0]=True
             
-        if update[0] and (self.current_step+1) %100 ==0:
+        if (self.current_step+1) %100 ==0:
             self._save_to_csv(float(reward))
 
         

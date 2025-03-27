@@ -249,10 +249,9 @@ class LauderdaleGrid:
         for bus, params in load_distribution.items():
             if bus in self.network.buses.index:
                 base_load = regional_demand * params['share']
-                load_profile = self._generate_load_profile(base_load, params, snapshots)
+
 
                 print(f"Adding load for {bus}: Base Load = {base_load:.4f}")
-                print(f"Load Profile for {bus}: {load_profile}")
 
                 self.network.add(
                     "Load",
@@ -267,18 +266,17 @@ class LauderdaleGrid:
         print("============================\n")
 
         return self.network
-
-    def _generate_load_profile(self, base_load, params, snapshots):
-        """Generate 24-hour load profile based on load type."""
-        profile = []
-        for hour in range(24):
-            if params['type'] == 'industrial':
-                factor = 0.9 + 0.2 * np.sin(np.pi * (hour - 8) / 9) if 8 <= hour <= 17 else 0.6
-            elif params['type'] == 'residential':
-                morning = 0.7 + 0.3 * np.exp(-(hour - 7) ** 2 / 8)
-                evening = 0.8 + 0.2 * np.exp(-(hour - params['peak_hour']) ** 2 / 8)
-                factor = max(morning, evening)
-            else:  # mixed
-                factor = 0.7 + 0.3 * np.exp(-(hour - params['peak_hour']) ** 2 / 16)
-            profile.append(base_load * factor)
-        return profile
+        #currently unused
+        """    def _generate_load_profile(self, base_load, params, snapshots):
+                profile = []
+                for hour in range(24):
+                    if params['type'] == 'industrial':
+                        factor = 0.9 + 0.2 * np.sin(np.pi * (hour - 8) / 9) if 8 <= hour <= 17 else 0.6
+                    elif params['type'] == 'residential':
+                        morning = 0.7 + 0.3 * np.exp(-(hour - 7) ** 2 / 8)
+                        evening = 0.8 + 0.2 * np.exp(-(hour - params['peak_hour']) ** 2 / 8)
+                        factor = max(morning, evening)
+                    else:  # mixed
+                        factor = 0.7 + 0.3 * np.exp(-(hour - params['peak_hour']) ** 2 / 16)
+                    profile.append(base_load * factor)
+                return profile"""

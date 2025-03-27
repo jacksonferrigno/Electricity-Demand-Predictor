@@ -1,3 +1,4 @@
+import os
 from predictors.LTSM_predictor import LTSMDemandPredictor
 from grid_drl.electrical_grid import LauderdaleGrid
 import tensorflow as tf
@@ -6,7 +7,7 @@ from grid_drl.drl import PowerGridEnv
 
 from stable_baselines3 import PPO
 from  stable_baselines3.common.env_checker import check_env
-from stable_baselines3.common.callbacks import ProgressBarCallback, EvalCallback
+from stable_baselines3.common.callbacks import ProgressBarCallback
 
 import gymnasium as gym
 from gymnasium.envs.registration import register 
@@ -47,11 +48,15 @@ def main():
    grid.add_loads(predictor=lstm_pred, 
                  input_sequence=day_sequence.reshape(1, -1, day_sequence.shape[-1]),
                  scale_factor=0.012)
+   # === Resume Training feature === 
    
    env = gym.make('PowerGridEnv-v0', grid=grid)
    check_env(env, warn=True)
-   model = PPO("MlpPolicy", env, gamma=0.98, verbose=1, tensorboard_log="./ppo_logs_v3/")
-   model.learn(total_timesteps=100000, callback= ProgressBarCallback())
+   
+   print("***Loaded model***")
+   model = PPO.load("ppo_powergrid_model", env=env)
+      
+   model.learn(total_timesteps=200000, callback= ProgressBarCallback())
    
    # save model
    model.save("ppo_powergrid_model")
