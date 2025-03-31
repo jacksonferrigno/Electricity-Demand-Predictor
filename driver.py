@@ -27,7 +27,6 @@ register(
    max_episode_steps=100
 )
 
-
 def main():
    # Initialize LSTM Predictor 
    lstm_pred = LTSMDemandPredictor(START, END)
@@ -56,7 +55,7 @@ def main():
    print("***Loaded model***")
    model = PPO.load("ppo_powergrid_model", env=env)
       
-   model.learn(total_timesteps=200000, callback= ProgressBarCallback())
+   model.learn(total_timesteps=400000,callback= ProgressBarCallback())
    
    # save model
    model.save("ppo_powergrid_model")
