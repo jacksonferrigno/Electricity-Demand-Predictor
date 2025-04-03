@@ -331,10 +331,10 @@ class PowerGridEnv(gym.Env):
             "best_brownout_risk": self.best_brownout_risk,
             "reward": reward
         }])
-        csv_file="performance.csv"
+        csv_file="performance_vector.csv"
         if not os.path.exists(csv_file):
             df.to_csv(csv_file, index=False) #create it 
         else:
             df.to_csv(csv_file, mode="a",index=False,header=False) #add to it 
         if self.current_step %100 ==0:
-            print(f"Saved best iteration {self.current_step} to CSV")
+            print(f"Saved best iteration {self.current_step} to CSV") 

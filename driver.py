@@ -7,7 +7,8 @@ from grid_drl.drl import PowerGridEnv
 
 from stable_baselines3 import PPO
 from  stable_baselines3.common.env_checker import check_env
-from stable_baselines3.common.callbacks import ProgressBarCallback
+from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
+from stable_baselines3.common.callbacks import ProgressBarCallback, EvalCallback, CheckpointCallback
 
 import gymnasium as gym
 from gymnasium.envs.registration import register 
@@ -47,18 +48,51 @@ def main():
    grid.add_loads(predictor=lstm_pred, 
                  input_sequence=day_sequence.reshape(1, -1, day_sequence.shape[-1]),
                  scale_factor=0.012)
-   # === Resume Training feature === 
+   # define a function that returns a fresh instance of custom env
+   raw_env = lambda: gym.make('PowerGridEnv-v0', grid=grid)
    
-   env = gym.make('PowerGridEnv-v0', grid=grid)
-   check_env(env, warn=True)
+   # wrap single env into vectorized interface -> gives a consistent interface for collecting and batch
+   env = DummyVecEnv([raw_env])
+    # wrap dummy vec into vec normalized obersation and reward for stabalized performance
+   env = VecNormalize(env, norm_obs=True, norm_reward=True, clip_reward=10.0)
    
-   print("***Loaded model***")
-   model = PPO.load("ppo_powergrid_model", env=env)
+   # === eval callback setup ===
+   eval_env = DummyVecEnv([raw_env])
+   eval_env = VecNormalize(env, norm_obs=True, norm_reward=True, clip_reward=10.0)
+   eval_env.obs_rms =env.obs_rms
+   eval_env.ret_rms = env.ret_rms
+   eval_env.training =False
+   
+   eval_callback= EvalCallback(
+      eval_env,
+      eval_freq=2048,
+      n_eval_episodes=5,
+      log_path="./ppo_logs_vect/eval",
+      best_model_save_path="./ppo_logs_vect/best_model/",
+      deterministic=True,
+      render=False
+   )
+   
+   # === checkpoint callback setup ===
+   checkpoint_callback = CheckpointCallback(
+    save_freq=25000,
+    save_path="./checkpoints/",
+    name_prefix="ppo_checkpoint"
+      )
+   
+
+   
+   model = PPO("MlpPolicy", env, verbose=1, tensorboard_log="./ppo_logs_vect")
+   
+   # === loading model logic ===
+   #print("***Loaded model***")
+   #model = PPO.load("ppo_powergrid_model", env=env)
       
-   model.learn(total_timesteps=400000,callback= ProgressBarCallback())
+   model.learn(total_timesteps=400000,callback= [ProgressBarCallback(), eval_callback, checkpoint_callback])
    
    # save model
    model.save("ppo_powergrid_model")
+   env.save("vec_normalize.pkl")
    print("training complete")
 
 if __name__ == "__main__":
