@@ -1,6 +1,8 @@
+import os
 import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
+import pandas as pd
 import copy
 
 class PowerGridEnv(gym.Env):
@@ -14,12 +16,16 @@ class PowerGridEnv(gym.Env):
         self.grid.loads["p_set"] = self.grid.loads["p_set"].astype(np.float64)
         self.initial_demand = self.grid.loads["p_set"].copy()
         
+        self.best_blackout_risk=1.0
+        self.best_brownout_risk=1.0
+        
+        
         #counts from the grid 
         self.num_generators = len(self.grid.generators)
         self.num_transformers= len(self.grid.transformers) if "transformers" in self.grid.__dict__ or not self.grid.transformers.empty else 0
         self.num_loads = len(self.grid.loads)
         
-        # Action space: Generator output adjustments
+        # Action space: Generator output adjustments + transformer taps + load shedding 
         self.total_actions = self.num_generators +self.num_transformers + self.num_loads
         self.action_space = spaces.Box(
             low=-1,
@@ -28,7 +34,7 @@ class PowerGridEnv(gym.Env):
             dtype=np.float32
         )
         
-        # State space: Generator outputs + load demands
+        # State space: Generator outputs + load demands + transformers
         self.state_size = 2* self.num_generators + self.num_loads+self.num_transformers
         self.observation_space = spaces.Box(
             low=-1,
@@ -101,14 +107,17 @@ class PowerGridEnv(gym.Env):
             capacity = (self.grid.generators.at[gen_name, "p_nom_max"]
                         if "p_nom_max" in self.grid.generators.columns
                         else self.grid.generators.at[gen_name,"p_nom"])
+            
             # calculate the min allowed in output based on a % of capacity 
             min_output = self.grid.generators.at[gen_name, "p_min_pu"]*capacity
             
             # calculate the change  allowed in output based on a % of capacity 
             delta= current* adj
+            
             # limit change by ramp limit 
             max_delta= ramp *capacity
             delta=np.clip(delta,-max_delta,max_delta)
+            
             # compute input and make sure we didnt make a mistake
             new_output= np.clip(current+delta, min_output, capacity)
             self.grid.generators.at[gen_name,"p_nom"] = new_output
@@ -126,6 +135,7 @@ class PowerGridEnv(gym.Env):
             tap_step = (self.grid.transformers.at[trans_name, "tap_step_percent"]
                         if "tap_step_percent" in self.grid.transformers.columns
                         else 2.5)
+            
             #ensure we stay within range
             new_tap = np.clip(current_tap+tap_adj *tap_step,tap_min,tap_max)
             #update 
@@ -157,7 +167,6 @@ class PowerGridEnv(gym.Env):
         # Avoid division by zero by setting a safe normalization factor
         max_gen_output = max(np.max(generator_outputs), 1e-6)
         max_load = max(np.max(load_demands), 1e-6)
-        max_cost= max(np.max(marginal_cost),1e-6)
 
         # Normalize to [-1, 1] range
         generator_outputs = (generator_outputs / max_gen_output) * 2 - 1
@@ -185,12 +194,26 @@ class PowerGridEnv(gym.Env):
 
         return state
     def _calculate_reward(self):
-        # Demand-supply mismatch penalty
+        
         prize=0
         punishment=0
         reward=0
+        
+        #risk calculations
+        blackout_risk=0
+        brownout_risk=0
+        # Demand-supply mismatch penalty
         total_demand = self.grid.loads["p_set"].sum()
         total_generation = self.grid.generators["p_nom"].sum()
+        
+        #  **BLACKOUT RISK** significant overload from high demand
+        if(total_demand/total_generation>=1.2):
+            blackout_risk+=.25
+        # **BROWNOUT RISK** slight overload on
+        elif(total_demand/total_generation>=1.00):
+            brownout_risk+=.25
+            
+        # get mismatch
         mismatch = abs(total_generation - total_demand)
         #supply and demand balance -> reward
         oversupply=(total_generation-total_demand)
@@ -211,19 +234,43 @@ class PowerGridEnv(gym.Env):
             thermal_violations = sum(self.grid.lines["loading"] > 100)
             punishment+=thermal_violations*4.5 
             
+            # **BLACKOUT RISK** at least 7 lines exceeding thermal limits
+            if (thermal_violations>=7):
+                blackout_risk+=0.25
+                
+            #potential **BROWNOUT RISK** if we have a thermal limit violation
+            elif(thermal_violations>1):
+                brownout_risk+=.25
+                
 
         #punishment for load shedding ---more load shedding =bad --- 
         if "p_base" in self.grid.loads.columns:
             shed_total = sum(self.grid.loads["p_base"]-self.grid.loads["p_set"])
             punishment += shed_total *0.01 # weight on shedding loads
 
+            # **BLACKOUT RISK** if load shedding >250 MWh
+            if (shed_total>=250):
+                blackout_risk+=0.25
+            #if we have a shed amount there is likely a brownout
+            elif(shed_total>=25):
+                brownout_risk+=0.25
             
-        #punishment for grid stability 
+        #punishment for grid instability 
         gen_variability = np.std(self.grid.generators["p_nom"].values)
         punishment +=gen_variability *0.025 #  penalty for instability
         
         if gen_variability<5:
             prize+=175
+        
+        
+        gen_usuage_percentage= (self.grid.generators["p_nom"]/self.grid.generators["p_nom_max"])*100
+        # ** BLACKOUT RISK ** Generators reaching max capacity 
+        #iff more than half of generators are 95% cap
+        if(gen_usuage_percentage>95).mean() >0.50:
+            blackout_risk+=0.25
+        #**BROWNOUT RISK** more than half of generators are at 90% cap
+        elif(gen_usuage_percentage>90).mean() >0.50:
+            brownout_risk+=0.25
         
         #marginal cost penalty
         gen_cost= sum(
@@ -240,10 +287,30 @@ class PowerGridEnv(gym.Env):
         if "loading" in self.grid.lines.columns:
             if (self.grid.lines["loading"] > 100).sum() == 0:
                 prize += 200
+                
+                
+                
+        # calc reward 
         reward = prize-punishment
         print(f"=======PRIZE REPORT=======")
         print(f"Reward {reward:.2f} Demand: {total_demand:.2f}, Supply {total_generation:.2f}")
+        print(f"=======BLACKOUT REPORT=======")
+        print(f"Blackout risk {blackout_risk:.2f} Brownout risk {brownout_risk:.2f}")
+
         print("="*25)
+        
+        # Update best values only if we find a lower (better) risk
+        if blackout_risk < self.best_blackout_risk:
+            self.best_blackout_risk = blackout_risk
+
+        # samesies for brownout 
+        if brownout_risk < self.best_brownout_risk:
+            self.best_brownout_risk = brownout_risk
+            
+        if (self.current_step+1) %100 ==0:
+            self._save_to_csv(float(reward))
+
+        
         return float(reward)
 
     def _check_done(self):
@@ -255,3 +322,19 @@ class PowerGridEnv(gym.Env):
                 return True
                 
         return False
+    
+    
+    def _save_to_csv(self, reward):
+        df =pd.DataFrame([{
+            "iteration": self.current_step,
+            "best_blackout_risk": self.best_blackout_risk,
+            "best_brownout_risk": self.best_brownout_risk,
+            "reward": reward
+        }])
+        csv_file="performance_vector.csv"
+        if not os.path.exists(csv_file):
+            df.to_csv(csv_file, index=False) #create it 
+        else:
+            df.to_csv(csv_file, mode="a",index=False,header=False) #add to it 
+        if self.current_step %100 ==0:
+            print(f"Saved best iteration {self.current_step} to CSV") 

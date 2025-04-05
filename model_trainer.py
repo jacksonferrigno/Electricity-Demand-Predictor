@@ -5,7 +5,7 @@ from predictors.LTSM_predictor import LTSMDemandPredictor
 
 if __name__ == "__main__":
     #config params
-    START ='2021-01-01'
+    START ='2023-01-01'
     END = '2024-12-31'
     print("\n running LSTM analysis...")
     lstm_predictor = LTSMDemandPredictor(START,END)
