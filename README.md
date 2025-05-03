@@ -27,45 +27,58 @@ This project analyzes the relationship between temperature variations and electr
 
 ---
 
-## LSTM Demand Prediction Model
- - The introduction to use a LSTM-based model was done to address a potential flaw with regrssion ignoring the temporal aspect. 
-### **Feature Engineering**
-- Temporal Features: Rolling means, demand lags, cyclical patterns.
-- Demand Features: Weekly mean, change rate, forecast deviation.
-- Temperature Features: Volatility, extreme temp flags, interaction terms.
+## LSTM Model
 
-### **Architecture**
-- Bidirectional LSTM layers (128 & 64 units).
-- Multi-head attention (8 heads, 32 key dim).
-- Dropout (0.2-0.3) & L2 regularization (0.02).
-- Custom loss function: **1.9x penalty for under-prediction, 1.5x for over-prediction**.
+- **Architecture:**  
+  2-layer bidirectional LSTM + attention, followed by global pooling and dense layers.
 
-### **Performance**
-- **R² Score: 0.911**
-- **RMSE: 18,976 MWh**
-- Outperformed TVA’s day-ahead forecast **70.08% of the time**.
+- **Key Features:**  
+  - Rolling temperature windows, demand lags  
+  - Weekly mean demand, change rate  
+  - Temp volatility, extreme flags
 
-#### **Results**
-![Predicted vs Actual](images/lstm_pred_vs_actual.png)
-![Prediction Error Distribution](images/lstm_error_distribution.png)
-
+- **Metrics:**  
+  | Metric        | Value              |
+  |---------------|--------------------|
+  | R²            | 0.911              |
+  | RMSE          | 19,565 MWh         |
+  | Mean Error    | 713 MWh (overbias) |
+  | Beats TVA Forecast | 70.08% of days |
+ ![LSTM Model](images/new_model.png)
 ---
 
-## Deep Reinforcement Learning (DRL) for Grid Optimization
-A reinforcement learning environment is designed using **Gymnasium** to optimize power allocation.
+## PPO DRL Agent
 
-### **Approach**
-- **State Space**: Generator outputs, transformer tap positions, load demands.
-- **Action Space**: Adjust generator output, transformer taps, and load shedding.
-- **Reward Function**: 
-  - Penalizes grid instability, high costs, and load shedding.
-  - Rewards balancing supply & demand with minimal violations.
+- **Environment:**  
+  PyPSA-based Lauderdale County grid  
+  - 6 generators (Nuclear, Hydro, CCGT)  
+  - Load centers with realistic demand shares  
+  - Thermal constraints, ramp limits, marginal costs
 
-### **Training Performance**
-- Mean reward improves over time, stabilizing after fine-tuning.
+- **Action Space:**  
+  - Generator control  
+  - Transformer tap shift  
+  - Load shedding (up to 20%)
 
-![Reward Mean Over Time](images/drl_reward_trend.png)
+- **Reward Design:**  
+  - Balance demand/supply, low thermal overload  
+  - Penalize instability, overloads, excessive cost
 
+- **Training:**  
+  - Algorithm: PPO (SB3)  
+  - Timesteps: 400,000  
+  - VecNormalize, 5 eval episodes per 2048 steps
+
+
+- **Metrics:**  
+  | Metric             | Value     |
+  |--------------------|-----------|
+  | Mean Reward        | ~1480     |
+  | Explained Variance | Up to 0.85 |
+  | Blackout Risk      | < 5%      |
+  | Load Shedding      | < 3% avg  |
+![DRL Reward](images/drl_reward_trend.png)
+![DRL EV](images/DRL_explained_var.png)
 ---
 
 ## Conclusion
