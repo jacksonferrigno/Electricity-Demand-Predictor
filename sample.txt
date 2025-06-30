@@ -1,0 +1,163 @@
+import shap
+import numpy as np
+import torch
+from ray.rllib.algorithms.ppo import PPO
+from ray.rllib.policy.sample_batch import SampleBatch
+
+def create_rllib_sequence_explainer(trainer, env, sequence_length=10, explain_target='value'):
+    """
+    Create SHAP explainer for RLlib PPO with LSTM
+    
+    Args:
+        trainer: RLlib PPO trainer
+        env: Environment instance
+        sequence_length: Length of observation sequences to use
+        explain_target: 'value', 'action_logits', or 'action_probs'
+    """
+    
+    def model_predict(observation_sequences):
+        """
+        Predict function for SHAP that handles sequences
+        observation_sequences: (batch_size, sequence_length, obs_dim)
+        """
+        predictions = []
+        policy = trainer.get_policy()
+        
+        for seq in observation_sequences:
+            # Reset LSTM state for each sequence
+            state = policy.get_initial_state()
+            
+            # Process sequence step by step
+            for i, obs in enumerate(seq):
+                # Prepare input batch
+                input_dict = {
+                    SampleBatch.OBS: np.array([obs]),
+                    SampleBatch.PREV_ACTIONS: np.array([0]),  # Dummy action
+                    SampleBatch.PREV_REWARDS: np.array([0.0]),  # Dummy reward
+                    "is_training": False,
+                }
+                
+                # Add state to input
+                for j, s in enumerate(state):
+                    input_dict[f"state_in_{j}"] = np.array([s])
+                
+                # Forward pass
+                results = policy.compute_actions_from_input_dict(input_dict)
+                
+                # Update state for next timestep
+                if f"state_out_0" in results:
+                    state = [results[f"state_out_{j}"][0] for j in range(len(state))]
+                
+                # Extract target value for final timestep
+                if i == len(seq) - 1:
+                    if explain_target == 'value':
+                        # Get value function output
+                        value_out = policy.compute_single_action(
+                            obs, state=state, explore=False, 
+                            policy_id="default_policy"
+                        )[2]['vf_preds']
+                        predictions.append(value_out)
+                    
+                    elif explain_target == 'action_logits':
+                        # Get action logits
+                        logits = results[SampleBatch.ACTION_DIST_INPUTS][0]
+                        predictions.append(logits)
+                    
+                    elif explain_target == 'action_probs':
+                        # Get action probabilities
+                        action_dist = policy.dist_class(
+                            results[SampleBatch.ACTION_DIST_INPUTS][0], 
+                            policy.model
+                        )
+                        probs = torch.softmax(action_dist.logits, dim=-1).detach().numpy()
+                        predictions.append(probs)
+        
+        return np.array(predictions)
+    
+    return model_predict
+
+def generate_background_sequences(env, trainer, num_sequences=100, sequence_length=10):
+    """Generate background sequences for SHAP baseline"""
+    sequences = []
+    
+    for _ in range(num_sequences):
+        obs = env.reset()
+        sequence = []
+        
+        for _ in range(sequence_length):
+            action = trainer.compute_single_action(obs)
+            obs, _, done, _ = env.step(action)
+            sequence.append(obs)
+            
+            if done:
+                obs = env.reset()
+        
+        sequences.append(sequence)
+    
+    return np.array(sequences)
+
+def collect_test_sequences(env, trainer, num_sequences=50, sequence_length=10):
+    """Collect test sequences to explain"""
+    test_sequences = []
+    
+    for _ in range(num_sequences):
+        obs = env.reset()
+        sequence = []
+        
+        for _ in range(sequence_length):
+            # Use trained policy for more realistic sequences
+            action = trainer.compute_single_action(obs, explore=False)
+            obs, _, done, _ = env.step(action)
+            sequence.append(obs)
+            
+            if done:
+                obs = env.reset()
+        
+        test_sequences.append(sequence)
+    
+    return np.array(test_sequences)
+```
+
+## Usage Example
+
+```python
+# Load your trained RLlib PPO agent
+config = {
+    "env": "YourEnv",
+    "model": {
+        "use_lstm": True,
+        "lstm_cell_size": 256,
+        "max_seq_len": 20,
+    },
+    # ... other config
+}
+
+trainer = PPO(config=config)
+trainer.restore("path/to/your/checkpoint")
+
+# Create environment
+env = YourEnv()
+
+# Generate background and test sequences
+print("Generating background sequences...")
+background_sequences = generate_background_sequences(env, trainer, num_sequences=100)
+
+print("Collecting test sequences...")
+test_sequences = collect_test_sequences(env, trainer, num_sequences=20)
+
+# Create SHAP explainer
+print("Creating SHAP explainer...")
+model_predict = create_rllib_sequence_explainer(
+    trainer, env, sequence_length=10, explain_target='value'
+)
+
+# Initialize SHAP explainer
+explainer = shap.Explainer(model_predict, background_sequences)
+
+# Compute SHAP values
+print("Computing SHAP values...")
+shap_values = explainer(test_sequences[:5])  # Start with small batch
+
+# Visualize results
+shap.plots.waterfall(shap_values[0])  # First test sequence
+shap.plots.heatmap(shap_values)       # All sequences
